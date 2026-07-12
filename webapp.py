@@ -480,7 +480,7 @@ elif page == "Create User":
     pbx_domain = st.text_input("PBX Domain", placeholder="pbx.example.com") if is_pbx else ""
     if mode == "Single":
         emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com", height=68)
-        caller_id = st.text_input("Caller ID" if not is_pbx else "DID", placeholder="5551234")
+        caller_id = st.text_input("Caller ID" if not is_pbx else "DID", placeholder="Required")
         pbx_ext = st.text_input("Extension", placeholder="1000") if is_pbx else ""
     else:
         if is_pbx:
@@ -494,6 +494,12 @@ elif page == "Create User":
     if st.button("Create", type="primary"):
         if not emails_raw.strip():
             st.warning("Enter at least one email.")
+        elif mode == "Single" and not caller_id.strip():
+            st.warning("Caller ID / DID is required.")
+        elif is_pbx and mode == "Single" and not pbx_ext.strip():
+            st.warning("Extension is required.")
+        elif is_pbx and not pbx_domain.strip():
+            st.warning("PBX Domain is required.")
         else:
             client = get_client()
             lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
@@ -510,11 +516,13 @@ elif page == "Create User":
                     elif is_pbx and mode == "Single":
                         result = run(provision_user(client, line, typ, caller_id, rec, vm, domain=pbx_domain, extension=pbx_ext, did=caller_id))
                     elif mode == "Single":
-                        result = run(provision_user(client, line, typ, caller_id or None, rec, vm))
+                        result = run(provision_user(client, line, typ, caller_id, rec, vm))
                     else:
                         parts = [p.strip() for p in line.split(",")]
-                        cid = parts[1] if len(parts) >= 2 else ""
-                        result = run(provision_user(client, parts[0], typ, cid or None, rec, vm))
+                        if len(parts) < 2:
+                            st.warning(f"Skipped invalid: {line}")
+                            continue
+                        result = run(provision_user(client, parts[0], typ, parts[1], rec, vm))
                     results.append(result)
             st.markdown("---")
             st.subheader("Results")
