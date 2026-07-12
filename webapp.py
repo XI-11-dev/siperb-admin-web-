@@ -100,8 +100,9 @@ def run_captured(fn, label="Working..."):
             return None
 
 # ── Web-native Siperb helpers ────────────────────────────────
-async def find_user(client, email):
-    users = await client.get_users()
+async def find_user(client, email, users=None):
+    if users is None:
+        users = await client.get_users()
     for u in users:
         if u.get("UserEmail", "").lower() == email.lower():
             return u
@@ -110,8 +111,8 @@ async def find_user(client, email):
 async def list_connections(client, uid):
     return await client.request("GET", f"/Users/{client.owner_user_id}/DomainUsers/{uid}/Connections")
 
-async def extend_one(client, email, days):
-    user = await find_user(client, email)
+async def extend_one(client, email, days, users=None):
+    user = await find_user(client, email, users)
     if not user:
         return (email, "failed", "user not found")
     uid = user["UserEmailId"]
@@ -137,15 +138,14 @@ async def extend_one(client, email, days):
             dt += timedelta(days=days)
             detail["Expiry"]["End"] = dt.isoformat().replace("+00:00", "Z")
             await client.update_connection(uid, cid, detail)
-            prefix = "" if days >= 0 else ""
             details.append(f"{name}: {'+' if days >= 0 else ''}{days}d")
         except ApiError as e:
             details.append(f"{name}: failed ({e.status})")
             result = "warning"
     return (email, result, "; ".join(details))
 
-async def set_expiry_date(client, email, target_date):
-    user = await find_user(client, email)
+async def set_expiry_date(client, email, target_date, users=None):
+    user = await find_user(client, email, users)
     if not user:
         return (email, "failed", "user not found")
     uid = user["UserEmailId"]
@@ -179,8 +179,8 @@ async def set_expiry_date(client, email, target_date):
             result = "warning"
     return (email, result, "; ".join(details))
 
-async def delete_one(client, email):
-    user = await find_user(client, email)
+async def delete_one(client, email, users=None):
+    user = await find_user(client, email, users)
     if not user:
         return (email, "failed", "user not found")
     uid = user["UserEmailId"]
@@ -211,9 +211,8 @@ async def delete_one(client, email):
     result = "warning" if warnings else "success"
     return (email, result, "; ".join(warnings) if warnings else "deleted")
 
-async def provision_user(client, email, profile_type, caller_id=None, rec=False, vm=False, domain="", extension="", did=""):
+async def provision_user(client, email, profile_type, caller_id=None, rec=False, vm=False, domain="", extension="", did="", expiry_days=None, send_welcome=False):
     from profiles import build_connexcs_profile, build_pbx_profile, build_connection_payload
-    from config import TRIAL_HOURS, TRIAL_MINUTES
     user = await find_user(client, email)
     if user:
         return (email, "failed", "already exists")
@@ -221,12 +220,16 @@ async def provision_user(client, email, profile_type, caller_id=None, rec=False,
         profile = build_pbx_profile(domain or "", extension or "", did or caller_id or "")
     else:
         profile = build_connexcs_profile(caller_id or email.split("@")[0])
-    expiry = datetime.now(timezone.utc) + timedelta(hours=TRIAL_HOURS, minutes=TRIAL_MINUTES)
+    if expiry_days is not None:
+        expiry = datetime.now(timezone.utc) + timedelta(days=expiry_days)
+    else:
+        from config import TRIAL_HOURS, TRIAL_MINUTES
+        expiry = datetime.now(timezone.utc) + timedelta(hours=TRIAL_HOURS, minutes=TRIAL_MINUTES)
     try:
         data = await client.request("POST", f"/Users/{client.owner_user_id}/DomainUsers",
                                     json={"Email": email, "UserType": "Internal",
                                           "Description": profile["description"],
-                                          "JoinMailingList": True, "SendWelcomeEmail": False})
+                                          "JoinMailingList": True, "SendWelcomeEmail": send_welcome})
         uid = data["UserEmailId"]
     except ApiError as e:
         return (email, "failed", "create failed")
@@ -266,8 +269,8 @@ async def provision_user(client, email, profile_type, caller_id=None, rec=False,
     detail = f"OK uid={uid} cid={cid}" + (f" (warns: {', '.join(warns)})" if warns else "")
     return (email, result, detail)
 
-async def refresh_one(client, email):
-    user = await find_user(client, email)
+async def refresh_one(client, email, users=None):
+    user = await find_user(client, email, users)
     if not user:
         return (email, "failed", "user not found")
     uid = user["UserEmailId"]
@@ -311,8 +314,8 @@ async def refresh_one(client, email):
     result = "success" if all("failed" not in r for r in results) else "warning"
     return (email, result, "; ".join(results))
 
-async def change_caller_id_one(client, email, new_cid):
-    user = await find_user(client, email)
+async def change_caller_id_one(client, email, new_cid, users=None):
+    user = await find_user(client, email, users)
     if not user:
         return (email, "failed", "user not found")
     uid = user["UserEmailId"]
@@ -409,10 +412,14 @@ if page == "Dashboard":
 # ══════════════════════════════════════════════════════════════
 elif page == "Audit":
     st.title("Connection Audit")
+    search_q = st.text_input("Filter by email", placeholder="Leave empty for all users")
     if st.button("Run Audit", type="primary"):
         async def run_audit():
             client = get_client()
             users = await client.get_users()
+            if search_q.strip():
+                q = search_q.strip().lower()
+                users = [u for u in users if q in u.get("UserEmail", "").lower()]
             total = len(users)
             cutoff = datetime.now(timezone.utc) + timedelta(days=config.EXPIRING_SOON_DAYS)
             from audit import parse_date, days_left
@@ -527,6 +534,9 @@ elif page == "Create User":
         pbx_ext = ""
     rec = is_pbx and st.checkbox("Enable call recording")
     vm = is_pbx and st.checkbox("Enable voicemail")
+    acc_type = st.radio("Account type", ["Trial", "Paid"], horizontal=True)
+    paid_days = st.number_input("Paid duration (days)", value=30, min_value=1) if acc_type == "Paid" else 0
+    send_welcome = st.checkbox("Send welcome email", value=False)
     if st.button("Create", type="primary"):
         if not emails_raw.strip():
             st.warning("Enter at least one email.")
@@ -539,27 +549,32 @@ elif page == "Create User":
         else:
             client = get_client()
             lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+            expiry_days = paid_days if acc_type == "Paid" else None
             results = []
             with st.spinner("Creating..."):
-                for line in lines:
-                    if is_pbx and mode == "Bulk":
-                        parts = [p.strip() for p in line.split(",")]
-                        if len(parts) < 3:
-                            st.warning(f"Skipped invalid: {line}")
-                            continue
-                        email, ext, did = parts[0], parts[1], parts[2]
-                        result = run(provision_user(client, email, typ, did, rec, vm, domain=pbx_domain, extension=ext, did=did))
-                    elif is_pbx and mode == "Single":
-                        result = run(provision_user(client, line, typ, caller_id, rec, vm, domain=pbx_domain, extension=pbx_ext, did=caller_id))
-                    elif mode == "Single":
-                        result = run(provision_user(client, line, typ, caller_id, rec, vm))
-                    else:
-                        parts = [p.strip() for p in line.split(",")]
-                        if len(parts) < 2:
-                            st.warning(f"Skipped invalid: {line}")
-                            continue
-                        result = run(provision_user(client, parts[0], typ, parts[1], rec, vm))
-                    results.append(result)
+                async def run_create():
+                    tasks = []
+                    for line in lines:
+                        if is_pbx and mode == "Bulk":
+                            parts = [p.strip() for p in line.split(",")]
+                            if len(parts) < 3:
+                                st.warning(f"Skipped invalid: {line}")
+                                continue
+                            email, ext, did = parts[0], parts[1], parts[2]
+                            tasks.append(provision_user(client, email, typ, did, rec, vm, domain=pbx_domain, extension=ext, did=did, expiry_days=expiry_days, send_welcome=send_welcome))
+                        elif is_pbx and mode == "Single":
+                            tasks.append(provision_user(client, line, typ, caller_id, rec, vm, domain=pbx_domain, extension=pbx_ext, did=caller_id, expiry_days=expiry_days, send_welcome=send_welcome))
+                        elif mode == "Single":
+                            tasks.append(provision_user(client, line, typ, caller_id, rec, vm, expiry_days=expiry_days, send_welcome=send_welcome))
+                        else:
+                            parts = [p.strip() for p in line.split(",")]
+                            if len(parts) < 2:
+                                st.warning(f"Skipped invalid: {line}")
+                                continue
+                            tasks.append(provision_user(client, parts[0], typ, parts[1], rec, vm, expiry_days=expiry_days, send_welcome=send_welcome))
+                    for coro in asyncio.as_completed(tasks):
+                        results.append(await coro)
+                run(run_create())
             st.markdown("---")
             st.subheader("Results")
             success = sum(1 for _, r, _ in results if r == "success")
@@ -584,34 +599,31 @@ elif page == "Extend Expiry":
     emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com")
     if mode == "Extend by days":
         days = st.number_input("Days (positive to add, negative to subtract)", value=30)
-        confirm = st.checkbox("I confirm I want to adjust expiry for the above users")
-        if st.button("Apply", type="primary"):
-            if not emails_raw.strip():
-                st.warning("Enter at least one email.")
-            elif not confirm:
-                st.warning("Please confirm the action.")
-            else:
-                client = get_client()
-                lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
-                results = []
-                with st.spinner("Extending..."):
-                    for email in lines:
-                        results.append(run(extend_one(client, email, days)))
     else:
         target_date = st.date_input("Set expiry date")
-        confirm = st.checkbox("I confirm I want to set expiry date for the above users")
-        if st.button("Apply", type="primary"):
-            if not emails_raw.strip():
-                st.warning("Enter at least one email.")
-            elif not confirm:
-                st.warning("Please confirm the action.")
-            else:
-                client = get_client()
-                lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
-                results = []
-                with st.spinner("Setting expiry..."):
+    confirm = st.checkbox("I confirm I want to modify expiry for the above users")
+    if st.button("Apply", type="primary"):
+        if not emails_raw.strip():
+            st.warning("Enter at least one email.")
+        elif not confirm:
+            st.warning("Please confirm the action.")
+        else:
+            client = get_client()
+            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+            results = []
+            spinner_text = "Extending..." if mode == "Extend by days" else "Setting expiry..."
+            with st.spinner(spinner_text):
+                async def run_extend():
+                    all_users = await client.get_users()
+                    tasks = []
                     for email in lines:
-                        results.append(run(set_expiry_date(client, email, target_date)))
+                        if mode == "Extend by days":
+                            tasks.append(extend_one(client, email, days, all_users))
+                        else:
+                            tasks.append(set_expiry_date(client, email, target_date, all_users))
+                    for coro in asyncio.as_completed(tasks):
+                        results.append(await coro)
+                run(run_extend())
             st.markdown("---")
             st.subheader("Results")
             success = sum(1 for _, r, _ in results if r == "success")
@@ -644,8 +656,12 @@ elif page == "Delete User":
             lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
             results = []
             with st.spinner("Deleting..."):
-                for email in lines:
-                    results.append(run(delete_one(client, email)))
+                async def run_del():
+                    all_users = await client.get_users()
+                    tasks = [delete_one(client, email, all_users) for email in lines]
+                    for coro in asyncio.as_completed(tasks):
+                        results.append(await coro)
+                run(run_del())
             st.markdown("---")
             st.subheader("Results")
             success = sum(1 for _, r, _ in results if r == "success")
@@ -679,8 +695,12 @@ elif page == "Refresh Connection":
             lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
             results = []
             with st.spinner("Refreshing..."):
-                for email in lines:
-                    results.append(run(refresh_one(client, email)))
+                async def run_ref():
+                    all_users = await client.get_users()
+                    tasks = [refresh_one(client, email, all_users) for email in lines]
+                    for coro in asyncio.as_completed(tasks):
+                        results.append(await coro)
+                run(run_ref())
             st.markdown("---")
             st.subheader("Results")
             success = sum(1 for _, r, _ in results if r == "success")
@@ -734,10 +754,23 @@ elif page == "Change Caller ID":
                         st.warning(f"Skipped invalid: {line}")
                 if rows:
                     st.markdown(f"Updating {len(rows)} user(s)...")
+                    results = []
                     with st.spinner("Updating..."):
-                        results = [run(change_caller_id_one(client, e, c)) for e, c in rows]
+                        async def run_cid():
+                            all_users = await client.get_users()
+                            tasks = [change_caller_id_one(client, e, c, all_users) for e, c in rows]
+                            for coro in asyncio.as_completed(tasks):
+                                results.append(await coro)
+                        run(run_cid())
                     st.markdown("---")
                     st.subheader("Results")
+                    success = sum(1 for _, r, _ in results if r == "success")
+                    warns = sum(1 for _, r, _ in results if r == "warning")
+                    failed = sum(1 for _, r, _ in results if r == "failed")
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Successful", success)
+                    col2.metric("Warnings", warns)
+                    col3.metric("Failed", failed)
                     for email, status, detail in results:
                         if status == "success":
                             st.success(f"{email}: {detail}")
@@ -815,7 +848,8 @@ elif page == "Send Notifications":
                 st.markdown(f"**{len(selected)} recipient(s) selected**")
                 for r in selected:
                     st.text(f"{r[0]} ({r[1]}) — {fmt_duration(r[2])}")
-                if st.button("2. Send Reminders", type="primary"):
+                confirm_send = st.checkbox("I confirm I want to send reminders to the above recipients", key="notify_confirm")
+                if confirm_send and st.button("2. Send Reminders", type="primary"):
                     html, subject = template
                     filtered_emails = [r[0] for r in selected]
                     filtered, skipped = filter_recently_sent(filtered_emails)
@@ -855,7 +889,8 @@ elif page == "Send Notifications":
                                 st.error(f"{email}: {status}")
     with tab2:
         emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com", key="notify_custom")
-        if st.button("Send to Listed Emails", type="primary"):
+        confirm_listed = st.checkbox("I confirm I want to send reminders to the listed emails", key="notify_listed_confirm")
+        if confirm_listed and st.button("Send to Listed Emails", type="primary"):
             if not emails_raw.strip():
                 st.warning("Enter at least one email.")
             elif not api_key:
@@ -998,7 +1033,8 @@ elif page == "ConnexCS DID":
     elif did_action == "Unassign":
         st.subheader("Unassign DIDs")
         raw = st.text_input("Enter DIDs to unassign (comma-separated)")
-        if raw and st.button("Unassign"):
+        confirm = st.checkbox("I confirm I want to unassign the entered DIDs", value=False, key="unassign_confirm")
+        if raw and confirm and st.button("Unassign"):
             search = [n.strip() for n in raw.split(",") if n.strip()]
             with st.spinner(f"Searching for {len(search)} number(s)..."):
                 all_dids = did_client.fetch_all_dids()
