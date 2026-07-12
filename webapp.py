@@ -454,18 +454,30 @@ elif page == "Audit":
             with st.expander(f"Missing Expiry ({len(results['no_expiry'])})", expanded=True):
                 for e, n, r in results["no_expiry"]:
                     st.warning(f"**{e}** — {n} ({r})")
+        def fmt_expiry(dt):
+            now = datetime.now(timezone.utc)
+            sec = int((dt - now).total_seconds())
+            expired = sec < 0
+            sec = abs(sec)
+            d = sec // 86400
+            h = (sec % 86400) // 3600
+            m = (sec % 3600) // 60
+            if expired:
+                return f"EXPIRED {d}d {h}h"
+            if d > 0:
+                return f"{d}d {h}h"
+            return f"{h}h {m}m"
         if results["expired"]:
             with st.expander(f"Expired ({len(results['expired'])})", expanded=True):
                 st.dataframe(
-                    [{"Email": e, "Connection": n, "Expired": f"{(datetime.now(timezone.utc)-d).days}d ago"} for e, n, _, d in results["expired"]],
+                    [{"Email": e, "Connection": n, "Status": fmt_expiry(d)} for e, n, _, d in results["expired"]],
                     use_container_width=True, hide_index=True
                 )
         if results["soon"]:
             with st.expander(f"Expiring Soon ({len(results['soon'])})", expanded=True):
                 rows = []
                 for e, n, _, d in results["soon"]:
-                    dl = (d - datetime.now(timezone.utc)).total_seconds() / 86400
-                    rows.append({"Email": e, "Connection": n, "Days Left": f"{dl:.1f}d"})
+                    rows.append({"Email": e, "Connection": n, "Remaining": fmt_expiry(d)})
                 st.dataframe(rows, use_container_width=True, hide_index=True)
         if not any([results["no_expiry"], results["expired"], results["soon"]]):
             st.success("All connections have valid expiry. No issues.")
