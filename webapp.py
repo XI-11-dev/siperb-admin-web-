@@ -9,7 +9,7 @@ from client import SiperbClient, ApiError
 import config
 from connexcs_did import ConnexCSClient
 
-st.set_page_config(page_title="Eleven Solutions LLC", page_icon="📞", layout="wide")
+st.set_page_config(page_title="Eleven Solutions LLC", page_icon="favicon.jpeg", layout="wide")
 
 # ── Theme override ────────────────────────────────────────────
 st.markdown("""
