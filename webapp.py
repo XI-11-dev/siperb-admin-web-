@@ -546,8 +546,8 @@ elif page == "Create User":
             emails_raw = st.text_area("Rows: email, callerid (one per line)", placeholder="user@example.com,5551234", height=100)
         caller_id = ""
         pbx_ext = ""
-    rec = is_pbx and st.checkbox("Enable call recording")
-    vm = is_pbx and st.checkbox("Enable voicemail")
+    rec = st.checkbox("Enable call recording")
+    vm = st.checkbox("Enable voicemail")
     acc_type = st.radio("Account type", ["Trial", "Paid"], horizontal=True)
     paid_days = st.number_input("Paid duration (days)", value=30, min_value=1) if acc_type == "Paid" else 0
     send_welcome = st.checkbox("Send welcome email", value=False)
