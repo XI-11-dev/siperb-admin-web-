@@ -1,5 +1,6 @@
 import asyncio
 import io
+import os
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone, timedelta
 
@@ -359,6 +360,10 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 if page == "Dashboard":
     st.title("Dashboard")
+    if not config.SIPERB_PAT and not config.SIPERB_PAT_ENCODED:
+        st.error("SIPERB_PAT not found in environment. Go to Streamlit Cloud → Settings → Secrets and set it.")
+        st.info("Secrets detected in env: " + ", ".join(k for k in ["SIPERB_PAT", "SIPERB_PAT_ENCODED", "RESEND_API_KEY", "SENDER_EMAIL", "CONNEXCS_USERNAME", "CONNEXCS_PASSWORD"] if os.environ.get(k)))
+        st.stop()
     try:
         client = get_client()
         billing, owner = run(asyncio.gather(
