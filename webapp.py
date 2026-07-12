@@ -39,6 +39,22 @@ hr { border-color: #e0e0e0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Login gate ──────────────────────────────────────────────
+if "_auth" not in st.session_state:
+    st.session_state._auth = False
+
+if not st.session_state._auth:
+    st.title("Eleven Solutions LLC")
+    st.markdown("### Login")
+    pwd = st.text_input("Password", type="password")
+    if st.button("Login", type="primary"):
+        if pwd == "0308":
+            st.session_state._auth = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    st.stop()
+
 # ── Persistent event loop ────────────────────────────────────
 if "_loop" not in st.session_state:
     st.session_state._loop = asyncio.new_event_loop()
