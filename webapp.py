@@ -48,6 +48,11 @@ asyncio.set_event_loop(loop)
 def run(coro):
     return loop.run_until_complete(coro)
 
+def parse_emails(raw):
+    """Support comma-separated and/or newline-separated emails."""
+    raw = raw.replace(",", "\n")
+    return [l.strip() for l in raw.strip().splitlines() if l.strip()]
+
 # ── Client init ──────────────────────────────────────────────
 def get_client():
     if "_client" not in st.session_state:
@@ -423,7 +428,7 @@ elif page == "Audit":
             total = len(users)
             cutoff = datetime.now(timezone.utc) + timedelta(days=config.EXPIRING_SOON_DAYS)
             from audit import parse_date, days_left
-            results = {"no_expiry": [], "expired": [], "soon": [], "healthy": 0, "done": 0}
+            results = {"no_expiry": [], "expired": [], "soon": [], "healthy": [], "done": 0}
             status_text = st.empty()
             pbar = st.progress(0, text="Auditing...")
             async def process_user(u):
@@ -455,7 +460,7 @@ elif page == "Audit":
                         return ("expired", (email, name, cid, dt))
                     elif dt <= cutoff:
                         return ("soon", (email, name, cid, dt))
-                    return ("healthy", None)
+                    return ("healthy", (email, name, cid, dt))
                 return await asyncio.gather(*[resolve(c) for c in conns])
             tasks = [process_user(u) for u in users]
             for coro in asyncio.as_completed(tasks):
@@ -468,8 +473,8 @@ elif page == "Audit":
                         results["expired"].append(data)
                     elif tag == "soon":
                         results["soon"].append(data)
-                    elif tag == "healthy":
-                        results["healthy"] += 1
+                    elif tag == "healthy" and data:
+                        results["healthy"].append(data)
                 pbar.progress(results["done"] / total)
             status_text.empty()
             pbar.empty()
@@ -477,11 +482,12 @@ elif page == "Audit":
         total, results = run(run_audit())
         results["expired"].sort(key=lambda x: x[3])
         results["soon"].sort(key=lambda x: x[3])
+        results["healthy"].sort(key=lambda x: x[3])
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Total", total)
         col2.metric("Expired", len(results["expired"]))
         col3.metric("Expiring Soon", len(results["soon"]))
-        col4.metric("Healthy", results["healthy"])
+        col4.metric("Healthy", len(results["healthy"]))
         if results["no_expiry"]:
             with st.expander(f"Missing Expiry ({len(results['no_expiry'])})", expanded=True):
                 for e, n, r in results["no_expiry"]:
@@ -511,7 +517,15 @@ elif page == "Audit":
                 for e, n, _, d in results["soon"]:
                     rows.append({"Email": e, "Connection": n, "Remaining": fmt_expiry(d)})
                 st.dataframe(rows, use_container_width=True, hide_index=True)
-        if not any([results["no_expiry"], results["expired"], results["soon"]]):
+        if search_q.strip() and results["healthy"]:
+            with st.expander(f"Healthy ({len(results['healthy'])})", expanded=False):
+                st.dataframe(
+                    [{"Email": e, "Connection": n, "Remaining": fmt_expiry(d)} for e, n, _, d in results["healthy"]],
+                    use_container_width=True, hide_index=True
+                )
+        is_filtered = search_q.strip()
+        all_clear = not any([results["no_expiry"], results["expired"], results["soon"]])
+        if all_clear and not is_filtered:
             st.success("All connections have valid expiry. No issues.")
 
 # ══════════════════════════════════════════════════════════════
@@ -548,7 +562,7 @@ elif page == "Create User":
             st.warning("PBX Domain is required.")
         else:
             client = get_client()
-            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+            lines = parse_emails(emails_raw)
             expiry_days = paid_days if acc_type == "Paid" else None
             results = []
             with st.spinner("Creating..."):
@@ -609,7 +623,7 @@ elif page == "Extend Expiry":
             st.warning("Please confirm the action.")
         else:
             client = get_client()
-            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+            lines = parse_emails(emails_raw)
             results = []
             spinner_text = "Extending..." if mode == "Extend by days" else "Setting expiry..."
             with st.spinner(spinner_text):
@@ -653,7 +667,7 @@ elif page == "Delete User":
             st.warning("Please confirm the action.")
         else:
             client = get_client()
-            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+            lines = parse_emails(emails_raw)
             results = []
             with st.spinner("Deleting..."):
                 async def run_del():
@@ -692,7 +706,7 @@ elif page == "Refresh Connection":
             st.warning("Please confirm the action.")
         else:
             client = get_client()
-            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+            lines = parse_emails(emails_raw)
             results = []
             with st.spinner("Refreshing..."):
                 async def run_ref():
@@ -898,7 +912,7 @@ elif page == "Send Notifications":
             else:
                 client = get_client()
                 with st.spinner("Sending..."):
-                    lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+                    lines = parse_emails(emails_raw)
                     st.session_state._template = None
                     try:
                         html, subject = run(fetch_template(api_key, "duedate"))
