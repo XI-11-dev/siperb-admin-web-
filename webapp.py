@@ -175,14 +175,14 @@ async def delete_one(client, email):
     result = "warning" if warnings else "success"
     return (email, result, "; ".join(warnings) if warnings else "deleted")
 
-async def provision_user(client, email, profile_type, caller_id=None, rec=False, vm=False):
+async def provision_user(client, email, profile_type, caller_id=None, rec=False, vm=False, domain="", extension="", did=""):
     from profiles import build_connexcs_profile, build_pbx_profile, build_connection_payload
     from config import TRIAL_HOURS, TRIAL_MINUTES
     user = await find_user(client, email)
     if user:
         return (email, "failed", "already exists")
     if profile_type == "pbx":
-        profile = build_pbx_profile("", "", caller_id or "")
+        profile = build_pbx_profile(domain or "", extension or "", did or caller_id or "")
     else:
         profile = build_connexcs_profile(caller_id or email.split("@")[0])
     expiry = datetime.now(timezone.utc) + timedelta(hours=TRIAL_HOURS, minutes=TRIAL_MINUTES)
@@ -476,31 +476,45 @@ elif page == "Create User":
     st.title("Create User")
     typ = st.selectbox("Profile Type", ["pbx", "connexcs"])
     mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True)
-    emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com")
+    is_pbx = typ == "pbx"
+    pbx_domain = st.text_input("PBX Domain", placeholder="pbx.example.com") if is_pbx else ""
     if mode == "Single":
-        caller_id = st.text_input("Caller ID (optional)")
+        emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com", height=68)
+        caller_id = st.text_input("Caller ID" if not is_pbx else "DID", placeholder="5551234")
+        pbx_ext = st.text_input("Extension", placeholder="1000") if is_pbx else ""
     else:
-        bulk_caller_ids = st.text_area("Caller IDs (one per line, same order as emails, optional)")
-    rec = typ == "pbx" and st.checkbox("Enable call recording")
-    vm = typ == "pbx" and st.checkbox("Enable voicemail")
+        if is_pbx:
+            emails_raw = st.text_area("Rows: email, extension, did (one per line)", placeholder="user@example.com,1000,5551234", height=100)
+        else:
+            emails_raw = st.text_area("Rows: email, callerid (one per line)", placeholder="user@example.com,5551234", height=100)
+        caller_id = ""
+        pbx_ext = ""
+    rec = is_pbx and st.checkbox("Enable call recording")
+    vm = is_pbx and st.checkbox("Enable voicemail")
     if st.button("Create", type="primary"):
         if not emails_raw.strip():
             st.warning("Enter at least one email.")
         else:
             client = get_client()
             lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
-            cid_lines = []
-            if mode == "Single":
-                cid_lines = [caller_id] if caller_id else [None]
-            else:
-                if bulk_caller_ids.strip():
-                    cid_lines = [l.strip() for l in bulk_caller_ids.strip().splitlines() if l.strip()]
-                while len(cid_lines) < len(lines):
-                    cid_lines.append(None)
             results = []
             with st.spinner("Creating..."):
-                for i, email in enumerate(lines):
-                    result = run(provision_user(client, email, typ, cid_lines[i] if i < len(cid_lines) and cid_lines[i] else None, rec, vm))
+                for line in lines:
+                    if is_pbx and mode == "Bulk":
+                        parts = [p.strip() for p in line.split(",")]
+                        if len(parts) < 3:
+                            st.warning(f"Skipped invalid: {line}")
+                            continue
+                        email, ext, did = parts[0], parts[1], parts[2]
+                        result = run(provision_user(client, email, typ, did, rec, vm, domain=pbx_domain, extension=ext, did=did))
+                    elif is_pbx and mode == "Single":
+                        result = run(provision_user(client, line, typ, caller_id, rec, vm, domain=pbx_domain, extension=pbx_ext, did=caller_id))
+                    elif mode == "Single":
+                        result = run(provision_user(client, line, typ, caller_id or None, rec, vm))
+                    else:
+                        parts = [p.strip() for p in line.split(",")]
+                        cid = parts[1] if len(parts) >= 2 else ""
+                        result = run(provision_user(client, parts[0], typ, cid or None, rec, vm))
                     results.append(result)
             st.markdown("---")
             st.subheader("Results")
