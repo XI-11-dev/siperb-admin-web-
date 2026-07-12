@@ -1047,6 +1047,15 @@ elif page == "ConnexCS DID":
                                     break
                             if from_user:
                                 st.info(f"Caller CLI: {from_user}")
+                                try:
+                                    dids = did_client._get("/api/cp/did", params={"did": from_user, "_limit": 5}, timeout=15)
+                                    if dids:
+                                        for d in dids:
+                                            tags = d.get("tags", [])
+                                            if tags:
+                                                st.info(f"Tags: [{', '.join(tags)}]")
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                 except Exception as ex:
