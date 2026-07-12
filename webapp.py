@@ -14,38 +14,28 @@ st.set_page_config(page_title="Eleven Solutions LLC", page_icon="📞", layout="
 # ── Theme override ────────────────────────────────────────────
 st.markdown("""
 <style>
-#root > div:first-child > div:first-child { background: #000 !important; }
-.stApp { background: #000 !important; }
-.stSidebar, .css-1d391kg, .css-1lcbmhc, section[data-testid="stSidebar"] { background: #111 !important; }
+.stApp, #root > div:first-child > div:first-child { background: #fff !important; }
+.stSidebar, .css-1d391kg, .css-1lcbmhc, section[data-testid="stSidebar"] { background: #f5f5f5 !important; }
 h1, h2, h3, h4 { color: #FF6B00 !important; }
-.stMarkdown, .stText, p, li, label { color: #fff !important; }
-.stButton > button { background: #FF6B00 !important; color: #000 !important; border: none !important; font-weight: bold !important; }
-.stButton > button:hover { background: #FF8C33 !important; color: #000 !important; }
+.stMarkdown, .stText, p, li, label, .stRadio > div, .stRadio label { color: #000 !important; }
+.stButton > button { background: #FF6B00 !important; color: #fff !important; border: none !important; font-weight: bold !important; }
+.stButton > button:hover { background: #FF8C33 !important; }
 .stButton > button:active { background: #E65C00 !important; }
-.stTextInput > div > div { background: #222 !important; border: 1px solid #FF6B00 !important; color: #fff !important; }
-.stTextInput input { color: #fff !important; }
-.stTextArea > div > div { background: #222 !important; border: 1px solid #FF6B00 !important; color: #fff !important; }
-.stTextArea textarea { color: #fff !important; }
-.stSelectbox > div > div { background: #222 !important; border: 1px solid #FF6B00 !important; color: #fff !important; }
-.stMultiSelect > div > div { background: #222 !important; border: 1px solid #FF6B00 !important; color: #fff !important; }
-.stNumberInput > div > div { background: #222 !important; border: 1px solid #FF6B00 !important; color: #fff !important; }
-.stNumberInput input { color: #fff !important; }
-.stCheckbox label { color: #fff !important; }
-.stRadio > div { color: #fff !important; }
-.stRadio label { color: #fff !important; }
-.css-1m6wrjf, .css-16txtl3, .stMetric { background: #111 !important; border: 1px solid #333 !important; border-radius: 8px !important; padding: 12px !important; }
+.stTextInput > div > div, .stTextArea > div > div, .stSelectbox > div > div, .stMultiSelect > div > div, .stNumberInput > div > div { background: #fff !important; border: 1px solid #ccc !important; color: #000 !important; }
+.stTextInput input, .stTextArea textarea, .stNumberInput input { color: #000 !important; }
+.css-1m6wrjf, .css-16txtl3, .stMetric { background: #f9f9f9 !important; border: 1px solid #e0e0e0 !important; border-radius: 8px !important; padding: 12px !important; }
 .stMetric label { color: #FF6B00 !important; }
-.stMetric .css-1xarl3l, .stMetric .css-qrbaxs { color: #fff !important; }
-.stSuccess { background: #0f3 !important; color: #000 !important; }
-.stError { background: #f33 !important; color: #fff !important; }
-.stWarning { background: #FF6B00 !important; color: #000 !important; }
-.stInfo { background: #222 !important; border: 1px solid #FF6B00 !important; color: #fff !important; }
-.stDataFrame { background: #111 !important; color: #fff !important; }
-.stDataFrame table { color: #fff !important; }
-div[data-testid="stExpander"] { background: #111 !important; border: 1px solid #333 !important; }
-.stCode { background: #222 !important; color: #FF6B00 !important; }
+.stMetric .css-1xarl3l, .stMetric .css-qrbaxs { color: #000 !important; }
+.stDataFrame { background: #fff !important; color: #000 !important; }
+.stDataFrame table { color: #000 !important; }
+div[data-testid="stExpander"] { background: #f9f9f9 !important; border: 1px solid #e0e0e0 !important; }
+.stCode { background: #f5f5f5 !important; color: #FF6B00 !important; }
 .stSpinner > div { border-top-color: #FF6B00 !important; }
-hr { border-color: #333 !important; }
+hr { border-color: #e0e0e0 !important; }
+.stSuccess { background: #d4edda !important; color: #155724 !important; }
+.stError { background: #f8d7da !important; color: #721c24 !important; }
+.stWarning { background: #fff3cd !important; color: #856404 !important; }
+.stInfo { background: #e2f0fb !important; border: 1px solid #b3d7ff !important; color: #004085 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -344,8 +334,7 @@ from notify import fetch_template, render_template, send_email, fmt_date, fmt_du
 
 # ── Sidebar ──────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("<h1 style='color:#FF6B00; margin-bottom:0;'>Eleven</h1>"
-                "<h2 style='color:#fff; margin-top:0;'>Solutions LLC</h2>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color:#FF6B00;'>Eleven</h1>", unsafe_allow_html=True)
     st.markdown("---")
     pages = [
         "Dashboard", "Create User", "Extend Expiry", "Delete User",
