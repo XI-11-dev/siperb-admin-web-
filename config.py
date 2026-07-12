@@ -9,9 +9,10 @@ TRANSPORT_TYPE = "udp"
 SBC_HOST = "eu-west-1-sbc-1.siperb.com"
 PBX_PASSWORD = "Office@11"
 
-# All secrets loaded from environment variables (Streamlit Cloud sets these from Secrets)
-SIPERB_PAT = os.environ.get("SIPERB_PAT")
-SIPERB_PAT_ENCODED = os.environ.get("SIPERB_PAT_ENCODED")
+# Siperb PAT (same as EXE — base64-encoded, identical to V6 client.py)
+ENCODED_PAT = "YmUzZGJjZTIyZTY1OTQ1ZWJmODFiNjBjNjgxNTE4MTYyYjkwZTVhYTdhNDVmYzY2ZjBmMjM2NDY2ZmExMTgyM2I1OWQzNmIyMjhjNjVhYzFhM2M0YmEwMzNmNGI0NTVlMDYyMTVlNmQ0Y2IwNTkzZTRlNTE4ZWU4NzAxMmIxMjYxZjc4ZjNiYmUyMWFiYmQ5ZmNhZGNhYmVjYTY3NTI2NjIyZjdlZTU3MmVmOTZlMWY0Njc3ODQ1NjFmMmQwNmQxYWM4NGY0MmE1YjJmMDFhZmEyYTA3MmMwMmViMGMzZjczN2E2ZTA4ZjhlODY0ZmY3NmMxZGM4YjIwZjk0MmI0NA=="
+
+# Real secrets — must be set via Streamlit Cloud Secrets or env vars
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 CONNEXCS_USERNAME = os.environ.get("CONNEXCS_USERNAME")
