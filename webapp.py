@@ -685,8 +685,13 @@ elif page == "Change Caller ID":
 # ══════════════════════════════════════════════════════════════
 elif page == "Send Notifications":
     st.title("Send Due Date Notifications")
-    api_key = st.text_input("Resend API key", value=config.RESEND_API_KEY or "", type="password")
-    sender = st.text_input("Sender email", value=config.SENDER_EMAIL or "billing@elev1solutions.com")
+    if config.RESEND_API_KEY and config.SENDER_EMAIL:
+        st.success("Resend API key and sender email configured in Streamlit Secrets.")
+        api_key = config.RESEND_API_KEY
+        sender = config.SENDER_EMAIL
+    else:
+        api_key = st.text_input("Resend API key", type="password")
+        sender = st.text_input("Sender email", value="billing@elev1solutions.com")
     tab1, tab2 = st.tabs(["Audit & Send", "Send to Specific Email"])
     with tab1:
         st.info("Audit all users and send due-date reminders to selected recipients.")
