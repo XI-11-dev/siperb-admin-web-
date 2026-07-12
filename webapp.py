@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 import streamlit as st
 
 from client import SiperbClient, ApiError
-from config import EXPIRING_SOON_DAYS, RESEND_API_KEY, SENDER_EMAIL
+import config
 from connexcs_did import ConnexCSClient
 
 st.set_page_config(page_title="Eleven Solutions LLC", page_icon="📞", layout="wide")
@@ -384,7 +384,7 @@ elif page == "Audit":
         client = get_client()
         users = run(client.get_users())
         total = len(users)
-        cutoff = datetime.now(timezone.utc) + timedelta(days=EXPIRING_SOON_DAYS)
+        cutoff = datetime.now(timezone.utc) + timedelta(days=config.EXPIRING_SOON_DAYS)
         from audit import parse_date, days_left
         no_expiry = []
         expired = []
@@ -660,8 +660,8 @@ elif page == "Change Caller ID":
 # ══════════════════════════════════════════════════════════════
 elif page == "Send Notifications":
     st.title("Send Due Date Notifications")
-    api_key = st.text_input("Resend API key", value=RESEND_API_KEY or "", type="password")
-    sender = st.text_input("Sender email", value=SENDER_EMAIL or "billing@elev1solutions.com")
+    api_key = st.text_input("Resend API key", value=config.RESEND_API_KEY or "", type="password")
+    sender = st.text_input("Sender email", value=config.SENDER_EMAIL or "billing@elev1solutions.com")
     tab1, tab2 = st.tabs(["Audit & Send", "Send to Specific Email"])
     with tab1:
         st.info("Audit all users and send due-date reminders to selected recipients.")

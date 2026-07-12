@@ -1,15 +1,18 @@
 import requests
 from cli import ask, yes_no, section, print_table, green, yellow, red
+from config import CONNEXCS_USERNAME, CONNEXCS_PASSWORD
 
 CONNEXCS_BASE = "https://app.connexcs.com"
-USERNAME = "business@elevensolutions.info"
-PASSWORD = "Office@11"
+_DEFAULT_USERNAME = "business@elevensolutions.info"
+_DEFAULT_PASSWORD = "Office@11"
 
 
 class ConnexCSClient:
-    def __init__(self):
+    def __init__(self, username=None, password=None):
         self.session = requests.Session()
-        self.session.auth = (USERNAME, PASSWORD)
+        u = username or CONNEXCS_USERNAME or _DEFAULT_USERNAME
+        p = password or CONNEXCS_PASSWORD or _DEFAULT_PASSWORD
+        self.session.auth = (u, p)
         self.session.headers.update({
             "Accept": "application/json",
             "Content-Type": "application/json",

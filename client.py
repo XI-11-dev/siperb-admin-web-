@@ -1,11 +1,6 @@
 import base64
 import httpx
-from config import BASE_URL
-
-_ENCODED_PAT = "YmUzZGJjZTIyZTY1OTQ1ZWJmODFiNjBjNjgxNTE4MTYyYjkwZTVhYTdhNDVmYzY2ZjBmMjM2NDY2ZmExMTgyM2I1OWQzNmIyMjhjNjVhYzFhM2M0YmEwMzNmNGI0NTVlMDYyMTVlNmQ0Y2IwNTkzZTRlNTE4ZWU4NzAxMmIxMjYxZjc4ZjNiYmUyMWFiYmQ5ZmNhZGNhYmVjYTY3NTI2NjIyZjdlZTU3MmVmOTZlMWY0Njc3ODQ1NjFmMmQwNmQxYWM4NGY0MmE1YjJmMDFhZmEyYTA3MmMwMmViMGMzZjczN2E2ZTA4ZjhlODY0ZmY3NmMxZGM4YjIwZjk0MmI0NA=="
-
-def _decode(s):
-    return base64.b64decode(s).decode()
+from config import BASE_URL, SIPERB_PAT, SIPERB_PAT_ENCODED
 
 class ApiError(Exception):
     def __init__(self, message, status=None, text=None):
@@ -20,7 +15,9 @@ class SiperbClient:
         self._http = httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_keepalive_connections=100, max_connections=200))
 
     async def login(self):
-        pat = _decode(_ENCODED_PAT)
+        pat = SIPERB_PAT or (base64.b64decode(SIPERB_PAT_ENCODED).decode() if SIPERB_PAT_ENCODED else None)
+        if not pat:
+            raise ApiError("No Siperb PAT configured. Set SIPERB_PAT in Streamlit secrets.", 401, "")
         r = await self._http.post(
             f"{BASE_URL}/Login",
             headers={"Authorization": f"Bearer {pat}"}
