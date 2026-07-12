@@ -1,0 +1,86 @@
+import base64
+import httpx
+from config import BASE_URL
+
+_ENCODED_PAT = "YmUzZGJjZTIyZTY1OTQ1ZWJmODFiNjBjNjgxNTE4MTYyYjkwZTVhYTdhNDVmYzY2ZjBmMjM2NDY2ZmExMTgyM2I1OWQzNmIyMjhjNjVhYzFhM2M0YmEwMzNmNGI0NTVlMDYyMTVlNmQ0Y2IwNTkzZTRlNTE4ZWU4NzAxMmIxMjYxZjc4ZjNiYmUyMWFiYmQ5ZmNhZGNhYmVjYTY3NTI2NjIyZjdlZTU3MmVmOTZlMWY0Njc3ODQ1NjFmMmQwNmQxYWM4NGY0MmE1YjJmMDFhZmEyYTA3MmMwMmViMGMzZjczN2E2ZTA4ZjhlODY0ZmY3NmMxZGM4YjIwZjk0MmI0NA=="
+
+def _decode(s):
+    return base64.b64decode(s).decode()
+
+class ApiError(Exception):
+    def __init__(self, message, status=None, text=None):
+        super().__init__(message)
+        self.status = status
+        self.text = text
+
+class SiperbClient:
+    def __init__(self):
+        self.owner_user_id = None
+        self.headers = None
+        self._http = httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_keepalive_connections=100, max_connections=200))
+
+    async def login(self):
+        pat = _decode(_ENCODED_PAT)
+        r = await self._http.post(
+            f"{BASE_URL}/Login",
+            headers={"Authorization": f"Bearer {pat}"}
+        )
+        if not r.is_success:
+            raise ApiError("Login failed. Check PAT.", r.status_code, r.text)
+        data = r.json()
+        self.owner_user_id = data["UserId"]
+        self.headers = {
+            "X-Api-Key": data["SessionToken"],
+            "Content-Type": "application/json"
+        }
+        return self
+
+    async def request(self, method, path, json=None, ok_statuses=None):
+        if ok_statuses is None:
+            ok_statuses = range(200, 300)
+        url = f"{BASE_URL}{path}"
+        r = await self._http.request(method, url, headers=self.headers, json=json)
+        if r.status_code not in ok_statuses:
+            raise ApiError("API request failed", r.status_code, r.text)
+        if r.text:
+            try:
+                return r.json()
+            except Exception:
+                return r.text
+        return None
+
+    async def get_owner_profile(self):
+        return await self.request("GET", f"/Users/{self.owner_user_id}")
+
+    async def get_users(self):
+        return await self.request("GET", f"/Users/{self.owner_user_id}/DomainUsers")
+
+    async def find_user(self, email, users_cache=None):
+        users = users_cache if users_cache is not None else await self.get_users()
+        for user in users:
+            if user.get("UserEmail", "").lower() == email.lower():
+                return user
+        return None
+
+    async def list_connections(self, domain_user_id):
+        return await self.request("GET", f"/Users/{self.owner_user_id}/DomainUsers/{domain_user_id}/Connections")
+
+    async def get_connection(self, domain_user_id, connection_id):
+        return await self.request("GET", f"/Users/{self.owner_user_id}/DomainUsers/{domain_user_id}/Connections/{connection_id}")
+
+    async def create_connection(self, domain_user_id, name, conn_type):
+        return await self.request("POST", f"/Users/{self.owner_user_id}/DomainUsers/{domain_user_id}/Connections",
+                                  json={"Name": name, "Type": conn_type})
+
+    async def update_connection(self, domain_user_id, connection_id, payload):
+        return await self.request("PUT", f"/Users/{self.owner_user_id}/DomainUsers/{domain_user_id}/Connections/{connection_id}",
+                                  json=payload)
+
+    async def delete_connection(self, domain_user_id, connection_id):
+        return await self.request("DELETE", f"/Users/{self.owner_user_id}/DomainUsers/{domain_user_id}/Connections/{connection_id}")
+
+    async def delete_domain_user(self, domain_user_id):
+        return await self.request("DELETE", f"/Users/{self.owner_user_id}/DomainUsers/{domain_user_id}?send_exit_email=no")
+
+    async def close(self):
+        await self._http.aclose()

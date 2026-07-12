@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+*.exe
+*.spec
+send_log.json
+.streamlit/secrets.toml
