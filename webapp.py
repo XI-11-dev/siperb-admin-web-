@@ -137,7 +137,43 @@ async def extend_one(client, email, days):
             dt += timedelta(days=days)
             detail["Expiry"]["End"] = dt.isoformat().replace("+00:00", "Z")
             await client.update_connection(uid, cid, detail)
-            details.append(f"{name}: extended {days}d")
+            prefix = "" if days >= 0 else ""
+            details.append(f"{name}: {'+' if days >= 0 else ''}{days}d")
+        except ApiError as e:
+            details.append(f"{name}: failed ({e.status})")
+            result = "warning"
+    return (email, result, "; ".join(details))
+
+async def set_expiry_date(client, email, target_date):
+    user = await find_user(client, email)
+    if not user:
+        return (email, "failed", "user not found")
+    uid = user["UserEmailId"]
+    try:
+        conns = await client.list_connections(uid)
+    except ApiError as e:
+        return (email, "failed", f"connections fetch failed ({e.status})")
+    if not conns:
+        return (email, "failed", "no connections")
+    result = "success"
+    details = []
+    for c in conns:
+        cid = c.get("ConnectionId")
+        name = c.get("Name")
+        try:
+            detail = await client.get_connection(uid, cid)
+            old = detail.get("Expiry", {}).get("End")
+            if not old:
+                details.append(f"{name}: no expiry")
+                result = "warning"
+                continue
+            old_dt = datetime.fromisoformat(old.replace("Z", "+00:00"))
+            target = target_date.replace(tzinfo=timezone.utc)
+            delta = (target - old_dt).total_seconds() / 86400
+            new_dt = old_dt + timedelta(days=delta)
+            detail["Expiry"]["End"] = new_dt.isoformat().replace("+00:00", "Z")
+            await client.update_connection(uid, cid, detail)
+            details.append(f"{name}: set to {target_date.strftime('%b %d, %Y')}")
         except ApiError as e:
             details.append(f"{name}: failed ({e.status})")
             result = "warning"
@@ -543,22 +579,39 @@ elif page == "Create User":
 
 # ══════════════════════════════════════════════════════════════
 elif page == "Extend Expiry":
-    st.title("Extend Connection Expiry")
-    days = st.number_input("Days to extend", min_value=1, value=30)
+    st.title("Extend / Set Connection Expiry")
+    mode = st.radio("Mode", ["Extend by days", "Set expiry date"], horizontal=True)
     emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com")
-    confirm = st.checkbox("I confirm I want to extend the above users")
-    if st.button("Extend", type="primary"):
-        if not emails_raw.strip():
-            st.warning("Enter at least one email.")
-        elif not confirm:
-            st.warning("Please confirm the action.")
-        else:
-            client = get_client()
-            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
-            results = []
-            with st.spinner("Extending..."):
-                for email in lines:
-                    results.append(run(extend_one(client, email, days)))
+    if mode == "Extend by days":
+        days = st.number_input("Days (positive to add, negative to subtract)", value=30)
+        confirm = st.checkbox("I confirm I want to adjust expiry for the above users")
+        if st.button("Apply", type="primary"):
+            if not emails_raw.strip():
+                st.warning("Enter at least one email.")
+            elif not confirm:
+                st.warning("Please confirm the action.")
+            else:
+                client = get_client()
+                lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+                results = []
+                with st.spinner("Extending..."):
+                    for email in lines:
+                        results.append(run(extend_one(client, email, days)))
+    else:
+        target_date = st.date_input("Set expiry date")
+        confirm = st.checkbox("I confirm I want to set expiry date for the above users")
+        if st.button("Apply", type="primary"):
+            if not emails_raw.strip():
+                st.warning("Enter at least one email.")
+            elif not confirm:
+                st.warning("Please confirm the action.")
+            else:
+                client = get_client()
+                lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
+                results = []
+                with st.spinner("Setting expiry..."):
+                    for email in lines:
+                        results.append(run(set_expiry_date(client, email, target_date)))
             st.markdown("---")
             st.subheader("Results")
             success = sum(1 for _, r, _ in results if r == "success")
