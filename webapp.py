@@ -578,7 +578,7 @@ elif page == "Create User":
             st.warning("PBX Domain is required.")
         else:
             client = get_client()
-            lines = parse_emails(emails_raw)
+            lines = [l.strip() for l in emails_raw.strip().splitlines() if l.strip()]
             expiry_days = paid_days if acc_type == "Paid" else None
             results = []
             with st.spinner("Creating..."):
