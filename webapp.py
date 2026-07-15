@@ -200,7 +200,7 @@ async def set_expiry_date(client, email, target_date, users=None):
             result = "warning"
     return (email, result, "; ".join(details))
 
-async def delete_one(client, email, users=None):
+async def delete_one(client, email, users=None, send_exit=False):
     user = await find_user(client, email, users)
     if not user:
         return (email, "failed", "user not found")
@@ -226,11 +226,15 @@ async def delete_one(client, email, users=None):
     except Exception:
         pass
     try:
-        await client.request("DELETE", f"{base}?send_exit_email=no")
+        exit_param = "yes" if send_exit else "no"
+        await client.request("DELETE", f"{base}?send_exit_email={exit_param}")
     except ApiError as e:
         return (email, "failed", f"delete failed ({e.status})")
     result = "warning" if warnings else "success"
-    return (email, result, "; ".join(warnings) if warnings else "deleted")
+    detail = "; ".join(warnings) if warnings else "deleted"
+    if send_exit:
+        detail += " (exit email sent)"
+    return (email, result, detail)
 
 async def provision_user(client, email, profile_type, caller_id=None, rec=False, vm=False, domain="", extension="", did="", expiry_days=None, send_welcome=False):
     from profiles import build_connexcs_profile, build_pbx_profile, build_connection_payload
@@ -675,6 +679,7 @@ elif page == "Extend Expiry":
 elif page == "Delete User":
     st.title("Delete User")
     emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com")
+    send_exit = st.checkbox("Send exit email to user", value=False)
     confirm = st.checkbox("I confirm I want to delete the above users permanently")
     if st.button("Delete", type="primary"):
         if not emails_raw.strip():
@@ -688,7 +693,7 @@ elif page == "Delete User":
             with st.spinner("Deleting..."):
                 async def run_del():
                     all_users = await client.get_users()
-                    tasks = [delete_one(client, email, all_users) for email in lines]
+                    tasks = [delete_one(client, email, all_users, send_exit) for email in lines]
                     for coro in asyncio.as_completed(tasks):
                         results.append(await coro)
                 run(run_del())
