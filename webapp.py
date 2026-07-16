@@ -1041,7 +1041,79 @@ elif page == "ConnexCS DID":
                    (flt == "Assigned" and d.get("customer_id"))]
         st.caption(f"Showing {len(display)} numbers")
 
-    # Unified table
+    # ── Manage Tags + Transcript (side by side) ──
+    if dids:
+        col_left, col_right = st.columns(2)
+        with col_left:
+            with st.expander("Manage Tags", expanded=False):
+                did_opts = {f"{d['did']}" + (" [Assigned]" if d.get("customer_id") else " [Unassigned]"): d for d in dids}
+                sel = st.selectbox("Select DID", list(did_opts.keys()), key="mt_did")
+                sel_did = did_opts[sel]
+                st.write(f"**Current tags:** {', '.join(sel_did.get('tags') or []) or '(none)'}")
+                col_t1, col_t2 = st.columns([1, 1])
+                new_t = col_t1.text_input("Add tag", key="mt_add", label_visibility="collapsed", placeholder="New tag")
+                if col_t1.button("Add", key="mt_add_btn", use_container_width=True):
+                    if new_t:
+                        full = did_client.get_did(sel_did["id"])
+                        ex = full.get("tags") or []
+                        if new_t not in ex:
+                            ex.append(new_t)
+                            full["tags"] = ex
+                            did_client.update_did(sel_did["id"], full)
+                        refresh_dids(); st.rerun()
+                if col_t2.button("Clear all tags", key="mt_clr", use_container_width=True):
+                    full = did_client.get_did(sel_did["id"])
+                    full["tags"] = []
+                    did_client.update_did(sel_did["id"], full)
+                    refresh_dids(); st.rerun()
+                with st.expander("Remove individual tags", expanded=False):
+                    tags = sel_did.get("tags") or []
+                    if tags:
+                        for t in tags:
+                            if st.button(f"✗ {t}", key=f"mt_rm_{sel_did['id']}_{t}"):
+                                full = did_client.get_did(sel_did["id"])
+                                full["tags"] = [x for x in (full.get("tags") or []) if x != t]
+                                did_client.update_did(sel_did["id"], full)
+                                refresh_dids(); st.rerun()
+                    else:
+                        st.write("No tags to remove.")
+        with col_right:
+            with st.expander("Pull Call Transcript", expanded=False):
+                callid = st.text_input("Call ID", key="did_ts_id")
+                if callid and st.button("Fetch", key="did_ts_fetch"):
+                    with st.spinner("Fetching..."):
+                        try:
+                            trans = did_client._get("/api/cp/transcribe", params={"callid": callid, "_limit": 500}, timeout=30)
+                            if not trans:
+                                st.warning("No transcript found.")
+                            else:
+                                segments = sorted(trans, key=lambda x: x.get("dt", ""))
+                                st.metric("Segments", len(segments))
+                                for t in segments:
+                                    leg = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
+                                    st.code(f"[{t.get('dt', '?')}] ({leg}) {t.get('text', '')}")
+                                try:
+                                    trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
+                                    for entry in trace if isinstance(trace, list) else []:
+                                        if entry.get("method") == "INVITE":
+                                            fu = entry.get("from_user", "")
+                                            if fu:
+                                                st.info(f"CLI: {fu}")
+                                                try:
+                                                    dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
+                                                    for dd2 in dd:
+                                                        tt = dd2.get("tags", [])
+                                                        if tt:
+                                                            st.info(f"Tags: [{', '.join(tt)}]")
+                                                except Exception:
+                                                    pass
+                                            break
+                                except Exception:
+                                    pass
+                        except Exception as ex:
+                            st.error(f"Error: {ex}")
+
+    # ── Unified table ──
     if not dids:
         st.info("No DIDs loaded. Click Refresh.")
     else:
@@ -1051,7 +1123,6 @@ elif page == "ConnexCS DID":
         </style>
         """, unsafe_allow_html=True)
 
-        # Table header
         h_cols = st.columns([2, 1.2, 2, 1.2])
         h_cols[0].markdown("**DID**")
         h_cols[1].markdown("**Status**")
@@ -1062,15 +1133,11 @@ elif page == "ConnexCS DID":
             did_id = d["id"]
             is_as = bool(d.get("customer_id"))
             tags = d.get("tags") or []
-
             cols = st.columns([2, 1.2, 2, 1.2])
             cols[0].write(d["did"])
-            # Status badge
             bg = "#d1fae5;color:#065f46" if is_as else "#fef3c7;color:#92400e"
             cols[1].markdown(f"<span class='did-badge' style='background:{bg}'>{'Assigned' if is_as else 'Unassigned'}</span>", unsafe_allow_html=True)
-            # Tags as plain text
             cols[2].write(", ".join(tags) if tags else "-")
-            # Actions
             if is_as:
                 if cols[3].button("Unassign", key=f"u_{did_id}", use_container_width=True):
                     full = did_client.get_did(did_id)
@@ -1081,7 +1148,7 @@ elif page == "ConnexCS DID":
                 if cols[3].button("Assign", key=f"a_{did_id}", use_container_width=True):
                     st.session_state._assigning = did_id; st.rerun()
 
-        # ── Assign form (appears below table when triggered) ──
+        # ── Assign form ──
         if st.session_state.get("_assigning"):
             did_id = st.session_state._assigning
             d = next((x for x in dids if x["id"] == did_id), None)
@@ -1122,75 +1189,5 @@ elif page == "ConnexCS DID":
                                 refresh_dids(); st.rerun()
                         if st.button("Cancel", key="ac_cancel"):
                             st.session_state._assigning = None; st.rerun()
-                except Exception as ex:
-                    st.error(f"Error: {ex}")
-
-        # ── Manage Tags section ──
-        with st.expander("Manage Tags", expanded=False):
-            did_opts = {f"{d['did']}" + (" [Assigned]" if d.get("customer_id") else " [Unassigned]"): d for d in dids}
-            sel = st.selectbox("Select DID", list(did_opts.keys()), key="mt_did")
-            sel_did = did_opts[sel]
-            st.write(f"**Current tags:** {', '.join(sel_did.get('tags') or []) or '(none)'}")
-            col_t1, col_t2 = st.columns([1, 1])
-            new_t = col_t1.text_input("Add tag", key="mt_add", label_visibility="collapsed", placeholder="New tag")
-            if col_t1.button("Add", key="mt_add_btn", use_container_width=True):
-                if new_t:
-                    full = did_client.get_did(sel_did["id"])
-                    ex = full.get("tags") or []
-                    if new_t not in ex:
-                        ex.append(new_t)
-                        full["tags"] = ex
-                        did_client.update_did(sel_did["id"], full)
-                    refresh_dids(); st.rerun()
-            if col_t2.button("Clear all tags", key="mt_clr", use_container_width=True):
-                full = did_client.get_did(sel_did["id"])
-                full["tags"] = []
-                did_client.update_did(sel_did["id"], full)
-                refresh_dids(); st.rerun()
-            with st.expander("Remove individual tags", expanded=False):
-                tags = sel_did.get("tags") or []
-                if tags:
-                    for t in tags:
-                        if st.button(f"✗ {t}", key=f"mt_rm_{sel_did['id']}_{t}"):
-                            full = did_client.get_did(sel_did["id"])
-                            full["tags"] = [x for x in (full.get("tags") or []) if x != t]
-                            did_client.update_did(sel_did["id"], full)
-                            refresh_dids(); st.rerun()
-                else:
-                    st.write("No tags to remove.")
-
-    # Transcript (collapsible)
-    with st.expander("Pull Call Transcript"):
-        callid = st.text_input("Call ID", key="did_ts_id")
-        if callid and st.button("Fetch", key="did_ts_fetch"):
-            with st.spinner("Fetching..."):
-                try:
-                    trans = did_client._get("/api/cp/transcribe", params={"callid": callid, "_limit": 500}, timeout=30)
-                    if not trans:
-                        st.warning("No transcript found.")
-                    else:
-                        segments = sorted(trans, key=lambda x: x.get("dt", ""))
-                        st.metric("Segments", len(segments))
-                        for t in segments:
-                            leg = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
-                            st.code(f"[{t.get('dt', '?')}] ({leg}) {t.get('text', '')}")
-                        try:
-                            trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
-                            for entry in trace if isinstance(trace, list) else []:
-                                if entry.get("method") == "INVITE":
-                                    fu = entry.get("from_user", "")
-                                    if fu:
-                                        st.info(f"CLI: {fu}")
-                                        try:
-                                            dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
-                                            for dd2 in dd:
-                                                tt = dd2.get("tags", [])
-                                                if tt:
-                                                    st.info(f"Tags: [{', '.join(tt)}]")
-                                        except Exception:
-                                            pass
-                                    break
-                        except Exception:
-                            pass
                 except Exception as ex:
                     st.error(f"Error: {ex}")
