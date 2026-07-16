@@ -984,17 +984,10 @@ elif page == "ConnexCS DID":
     st.title("ConnexCS DID Manager")
     did_client = ConnexCSClient()
 
-    # ── init session state keys ──
-    if "_did_data" not in st.session_state:
-        st.session_state._did_data = None
-    if "_did_filter" not in st.session_state:
-        st.session_state._did_filter = "All"
-    if "_assigning_row" not in st.session_state:
-        st.session_state._assigning_row = None
-    if "_editing_tags" not in st.session_state:
-        st.session_state._editing_tags = None
+    for k in ["_did_data", "_did_filter", "_assigning_row", "_editing_tags"]:
+        if k not in st.session_state:
+            setattr(st.session_state, k, None if k != "_did_filter" else "All")
 
-    # ── helpers ──
     def refresh_dids():
         with st.spinner("Fetching DIDs..."):
             try:
@@ -1012,240 +1005,173 @@ elif page == "ConnexCS DID":
         refresh_dids()
 
     dids = st.session_state._did_data or []
+    cnt_un = sum(1 for d in dids if not d.get("customer_id"))
+    cnt_as = len(dids) - cnt_un
 
-    # ── Filter pills + refresh ──
-    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns([1, 1, 1, 1, 2])
-    with col_f1:
-        if st.button("⟳ Refresh"):
-            refresh_dids()
-            st.rerun()
     flt = st.session_state._did_filter
-    with col_f2:
-        if st.button("All" + (f" ({len(dids)})" if dids else ""), type="primary" if flt == "All" else "secondary"):
+    c1, c2, c3, c4 = st.columns([1, 1.5, 1.5, 1.5])
+    with c1:
+        if st.button("⟳ Refresh"):
+            refresh_dids(); st.rerun()
+    with c2:
+        if st.button(f"All ({len(dids)})", type="primary" if flt == "All" else "secondary"):
             st.session_state._did_filter = "All"; st.rerun()
-    with col_f3:
-        cnt_un = sum(1 for d in dids if not d.get("customer_id"))
+    with c3:
         if st.button(f"Unassigned ({cnt_un})", type="primary" if flt == "Unassigned" else "secondary"):
             st.session_state._did_filter = "Unassigned"; st.rerun()
-    with col_f4:
-        cnt_as = sum(1 for d in dids if d.get("customer_id"))
+    with c4:
         if st.button(f"Assigned ({cnt_as})", type="primary" if flt == "Assigned" else "secondary"):
             st.session_state._did_filter = "Assigned"; st.rerun()
 
-    if dids:
-        if flt == "Unassigned":
-            display = [d for d in dids if not d.get("customer_id")]
-        elif flt == "Assigned":
-            display = [d for d in dids if d.get("customer_id")]
+    st.caption(f"Total: {len(dids)} DIDs — Unassigned: {cnt_un} — Assigned: {cnt_as}")
+
+    # ── helper: inline tag editor ──
+    def tag_editor(did_id, did_number, current_tags):
+        st.markdown(f"**Tags — {did_number}**")
+        if current_tags:
+            cols = st.columns(len(current_tags) + 1)
+            for i, t in enumerate(current_tags):
+                cols[i].markdown(f"`{t}`")
+                if cols[i].button("✗", key=f"t_rm_{did_id}_{i}"):
+                    full = did_client.get_did(did_id)
+                    full["tags"] = [x for x in (full.get("tags") or []) if x != t]
+                    did_client.update_did(did_id, full)
+                    refresh_dids(); st.rerun()
         else:
-            display = dids
+            st.write("No tags.")
+        new_tag = st.text_input("New tag", key=f"t_add_{did_id}", label_visibility="collapsed", placeholder="New tag")
+        col1, col2 = st.columns([1, 4])
+        if col1.button("Add", key=f"t_btn_{did_id}"):
+            if new_tag:
+                full = did_client.get_did(did_id)
+                existing = full.get("tags") or []
+                if new_tag not in existing:
+                    existing.append(new_tag)
+                    full["tags"] = existing
+                    did_client.update_did(did_id, full)
+                refresh_dids(); st.rerun()
+        if col2.button("Done", key=f"t_done_{did_id}"):
+            st.session_state._editing_tags = None; st.rerun()
 
-        # ── Metrics ──
-        metrics_cols = st.columns(3)
-        metrics_cols[0].metric("Total DIDs", len(dids))
-        metrics_cols[1].metric("Unassigned", cnt_un)
-        metrics_cols[2].metric("Assigned", cnt_as)
-
-        # ── Master table ──
-        st.markdown("### DIDs")
-        header = st.columns([2, 2, 2, 2, 1, 1, 1])
-        header[0].markdown("**DID**")
-        header[1].markdown("**Customer**")
-        header[2].markdown("**Destination**")
-        header[3].markdown("**Tags**")
-        header[4].markdown("**Status**")
-        header[5].markdown("**Tags**")
-        header[6].markdown("**Action**")
-        st.divider()
-
-        for d in display:
-            did_id = d["id"]
-            row_key = f"row_{did_id}"
-            is_assigned = bool(d.get("customer_id"))
-            tags = d.get("tags") or []
-
-            cols = st.columns([2, 2, 2, 2, 1, 1, 1])
-            cols[0].write(d["did"])
-            cols[1].write(str(d.get("customer_id") or "-"))
-            cols[2].write(str(d.get("destination") or "-"))
-
-            # Tags: show as comma-separated
-            tag_text = ", ".join(tags) if tags else ""
-            cols[3].write(tag_text if tag_text else "-")
-
-            # Status
-            cols[4].write("Assigned" if is_assigned else "Unassigned")
-
-            # Tags action
-            tag_edit_key = f"tag_btn_{did_id}"
-            needs_edit = st.session_state._editing_tags == did_id
-            if needs_edit:
-                if cols[5].button("Done", key=tag_edit_key, help="Close tag editor"):
-                    st.session_state._editing_tags = None
-                    st.rerun()
+    # ── helper: assign form ──
+    def assign_form(did_id, did_number):
+        st.markdown(f"**Assign {did_number}**")
+        customers = did_client.get_customers()
+        if not customers:
+            st.error("No active customers.")
+            st.session_state._assigning_row = None
+            return
+        cust_opts = {f"{c.get('name') or c.get('company_name') or c.get('email','(no name)')}": c for c in customers}
+        cust_label = st.selectbox("Customer", list(cust_opts.keys()), key=f"c_{did_id}")
+        customer = cust_opts[cust_label]
+        ips = did_client.get_customer_ips(customer["id"])
+        hosts = sorted(set((r.get("fqdn") or r.get("ip") or "").strip() for r in ips if r.get("fqdn") or r.get("ip")))
+        host_opts = hosts + ["Custom"]
+        dest_label = st.selectbox("Destination", host_opts, key=f"d_{did_id}")
+        dest_host = st.text_input("IP/host", key=f"dh_{did_id}") if dest_label == "Custom" else dest_label
+        tag_new = st.text_input("Tags", key=f"tg_{did_id}", placeholder="comma-separated")
+        if st.button("Confirm", key=f"ca_{did_id}"):
+            if not dest_host:
+                st.warning("Destination required.")
             else:
-                if cols[5].button("Edit", key=tag_edit_key, help="Add/remove tags"):
-                    st.session_state._editing_tags = did_id
-                    st.rerun()
+                full = did_client.get_did(did_id)
+                full["customer_id"] = customer["id"]
+                full["destination"] = f"{did_number}@{dest_host}"
+                full["destination_type"] = "uri"
+                if tag_new:
+                    for t in [x.strip() for x in tag_new.split(",") if x.strip()]:
+                        existing = full.get("tags") or []
+                        if t not in existing:
+                            existing.append(t)
+                        full["tags"] = existing
+                did_client.update_did(did_id, full)
+                st.success(f"{did_number} assigned")
+                st.session_state._assigning_row = None
+                refresh_dids(); st.rerun()
+        if st.button("Cancel", key=f"cc_{did_id}"):
+            st.session_state._assigning_row = None; st.rerun()
 
-            # Action
-            action_col = cols[6]
-            if is_assigned:
-                if action_col.button("Unassign", key=f"un_{did_id}"):
-                    try:
+    if not dids:
+        st.info("No DIDs loaded. Click Refresh.")
+    else:
+        show_un = flt in ("All", "Unassigned")
+        show_as = flt in ("All", "Assigned")
+
+        if show_un and cnt_un:
+            st.subheader(f"Unassigned DIDs ({cnt_un})")
+            un_data = [d for d in dids if not d.get("customer_id")]
+            un_df = []
+            for d in un_data:
+                tags_str = ", ".join(d.get("tags") or [])
+                row = {"DID": d["did"], "Tags": tags_str}
+                un_df.append(row)
+            st.dataframe(un_df, use_container_width=True, hide_index=True, height=min(35 * len(un_df) + 38, 400))
+            # Assign / tag actions for unassigned
+            for d in un_data:
+                did_id = d["id"]
+                col_a, col_t = st.columns([1, 4])
+                if col_a.button(f"Assign {d['did']}", key=f"as_{did_id}", use_container_width=True):
+                    st.session_state._assigning_row = did_id; st.rerun()
+                if col_t.button(f"Edit tags", key=f"et_{did_id}"):
+                    st.session_state._editing_tags = did_id; st.rerun()
+                if st.session_state._assigning_row == did_id:
+                    assign_form(did_id, d["did"])
+                if st.session_state._editing_tags == did_id:
+                    tag_editor(did_id, d["did"], d.get("tags") or [])
+
+        if show_as and cnt_as:
+            with st.expander(f"Assigned DIDs ({cnt_as})", expanded=flt == "Assigned"):
+                as_data = [d for d in dids if d.get("customer_id")]
+                as_df = []
+                for d in as_data:
+                    tags_str = ", ".join(d.get("tags") or [])
+                    row = {"DID": d["did"], "Customer": d.get("customer_id", ""), "Destination": d.get("destination", ""), "Tags": tags_str}
+                    as_df.append(row)
+                st.dataframe(as_df, use_container_width=True, hide_index=True, height=min(35 * len(as_df) + 38, 400))
+                for d in as_data:
+                    did_id = d["id"]
+                    col_a, col_t = st.columns([1, 4])
+                    if col_a.button(f"Unassign {d['did']}", key=f"un_{did_id}", use_container_width=True):
                         full = did_client.get_did(did_id)
                         full["customer_id"] = None
                         did_client.update_did(did_id, full)
-                        refresh_dids()
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(str(ex))
-            else:
-                if action_col.button("Assign", key=f"as_{did_id}"):
-                    st.session_state._assigning_row = did_id
-                    st.rerun()
+                        refresh_dids(); st.rerun()
+                    if col_t.button(f"Edit tags", key=f"et_{did_id}"):
+                        st.session_state._editing_tags = did_id; st.rerun()
+                    if st.session_state._editing_tags == did_id:
+                        tag_editor(did_id, d["did"], d.get("tags") or [])
 
-            # ── Assign form (shown below the row being assigned) ──
-            if st.session_state.get("_assigning_row") == did_id:
-                with st.container(border=True):
-                    st.markdown(f"**Assign {d['did']}**")
-                    try:
-                        customers = did_client.get_customers()
-                        if not customers:
-                            st.error("No active customers.")
-                            st.session_state._assigning_row = None
-                        else:
-                            cust_opts = {f"{c.get('name') or c.get('company_name') or c.get('email','(no name)')} (id={c['id']})": c for c in customers}
-                            cust_label = st.selectbox("Customer", list(cust_opts.keys()), key=f"cust_{did_id}")
-                            customer = cust_opts[cust_label]
-                            ips = did_client.get_customer_ips(customer["id"])
-                            hosts = sorted(set(
-                                (r.get("fqdn") or r.get("ip") or "").strip()
-                                for r in ips if r.get("fqdn") or r.get("ip")
-                            ))
-                            host_opts = hosts + ["Enter custom IP/host"]
-                            dest_label = st.selectbox("Destination", host_opts, key=f"dest_{did_id}")
-                            if dest_label == "Enter custom IP/host":
-                                dest_host = st.text_input("Enter IP/host", key=f"custhost_{did_id}")
-                            else:
-                                dest_host = dest_label
-                            tag_new = st.text_input("Tags to add (comma-separated)", key=f"asstag_{did_id}")
-                            col_c, col_cancel = st.columns([1, 1])
-                            with col_c:
-                                if st.button("Confirm Assign", key=f"confirm_as_{did_id}"):
-                                    if not dest_host:
-                                        st.warning("Destination required.")
-                                    else:
-                                        try:
-                                            full = did_client.get_did(did_id)
-                                            full["customer_id"] = customer["id"]
-                                            full["destination"] = f"{d['did']}@{dest_host}"
-                                            full["destination_type"] = "uri"
-                                            if tag_new:
-                                                new_tags = [t.strip() for t in tag_new.split(",") if t.strip()]
-                                                existing = full.get("tags") or []
-                                                for t in new_tags:
-                                                    if t not in existing:
-                                                        existing.append(t)
-                                                full["tags"] = existing
-                                            did_client.update_did(did_id, full)
-                                            st.success(f"{d['did']} assigned")
-                                            st.session_state._assigning_row = None
-                                            refresh_dids()
-                                            st.rerun()
-                                        except Exception as ex:
-                                            st.error(str(ex))
-                            with col_cancel:
-                                if st.button("Cancel", key=f"cancel_as_{did_id}"):
-                                    st.session_state._assigning_row = None
-                                    st.rerun()
-                    except Exception as ex:
-                        st.error(f"Error: {ex}")
-
-            # ── Tag editor (shown below the row being edited) ──
-            if st.session_state._editing_tags == did_id:
-                with st.container(border=True):
-                    st.markdown(f"**Edit Tags — {d['did']}**")
-                    cols_tag = st.columns([4, 1])
-                    if tags:
-                        cols_tag[0].markdown("Current: " + " ".join(f"`{t}`" for t in tags))
-                    else:
-                        cols_tag[0].markdown("No tags.")
-                    if cols_tag[1].button("× Clear All", key=f"clr_{did_id}"):
-                        try:
-                            full = did_client.get_did(did_id)
-                            full["tags"] = []
-                            did_client.update_did(did_id, full)
-                            refresh_dids()
-                            st.rerun()
-                        except Exception:
-                            pass
-                    # Remove individual tags
-                    if tags:
-                        st.markdown("Click tag to remove:")
-                        tag_btns = st.columns(min(len(tags), 6))
-                        for i, t in enumerate(tags):
-                            col_idx = i % 6
-                            if tag_btns[col_idx].button(f"✗ {t}", key=f"rm_{did_id}_{i}"):
-                                try:
-                                    full = did_client.get_did(did_id)
-                                    full["tags"] = [x for x in (full.get("tags") or []) if x != t]
-                                    did_client.update_did(did_id, full)
-                                    refresh_dids()
-                                    st.rerun()
-                                except Exception:
-                                    pass
-                    new_tag = st.text_input("Add tag", key=f"add_{did_id}", label_visibility="collapsed", placeholder="Enter new tag")
-                    if st.button("Add Tag", key=f"addbtn_{did_id}"):
-                        if new_tag:
-                            try:
-                                full = did_client.get_did(did_id)
-                                existing = full.get("tags") or []
-                                if new_tag not in existing:
-                                    existing.append(new_tag)
-                                    full["tags"] = existing
-                                    did_client.update_did(did_id, full)
-                                refresh_dids()
-                                st.rerun()
-                            except Exception as ex:
-                                st.error(str(ex))
-            st.divider()
-    else:
-        st.info("No DIDs loaded. Click Refresh.")
-
-    # ── Transcript section ──
+    # ── Transcript ──
     with st.expander("Pull Call Transcript"):
-        callid = st.text_input("Call ID", key="did_transcript_callid")
-        if callid and st.button("Fetch Transcript", key="did_fetch_transcript"):
-            with st.spinner("Fetching transcript..."):
+        callid = st.text_input("Call ID", key="did_ts_id")
+        if callid and st.button("Fetch", key="did_ts_fetch"):
+            with st.spinner("Fetching..."):
                 try:
                     trans = did_client._get("/api/cp/transcribe", params={"callid": callid, "_limit": 500}, timeout=30)
                     if not trans:
-                        st.warning("No transcript found for this Call ID.")
+                        st.warning("No transcript found.")
                     else:
                         segments = sorted(trans, key=lambda x: x.get("dt", ""))
                         st.metric("Segments", len(segments))
                         for t in segments:
-                            leg_tag = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
-                            st.code(f"[{t.get('dt', '?')}] ({leg_tag}) {t.get('text', '')}")
+                            leg = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
+                            st.code(f"[{t.get('dt', '?')}] ({leg}) {t.get('text', '')}")
                         try:
                             trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
-                            from_user = ""
                             for entry in trace if isinstance(trace, list) else []:
                                 if entry.get("method") == "INVITE":
-                                    from_user = entry.get("from_user", "")
+                                    fu = entry.get("from_user", "")
+                                    if fu:
+                                        st.info(f"CLI: {fu}")
+                                        try:
+                                            dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
+                                            for dd2 in dd:
+                                                tt = dd2.get("tags", [])
+                                                if tt:
+                                                    st.info(f"Tags: [{', '.join(tt)}]")
+                                        except Exception:
+                                            pass
                                     break
-                            if from_user:
-                                st.info(f"Caller CLI: {from_user}")
-                                try:
-                                    dids2 = did_client._get("/api/cp/did", params={"did": from_user, "_limit": 5}, timeout=15)
-                                    if dids2:
-                                        for dd in dids2:
-                                            tt = dd.get("tags", [])
-                                            if tt:
-                                                st.info(f"Tags: [{', '.join(tt)}]")
-                                except Exception:
-                                    pass
                         except Exception:
                             pass
                 except Exception as ex:
