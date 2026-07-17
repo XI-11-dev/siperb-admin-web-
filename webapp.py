@@ -984,9 +984,14 @@ elif page == "ConnexCS DID":
     st.title("DID Inventory")
     did_client = ConnexCSClient()
 
-    for k in ["_did_data", "_did_filter", "_assigning"]:
+    for k in ["_did_data", "_did_filter", "_assigning", "_bulk_assign", "_bulk_ids", "_selected_dids"]:
         if k not in st.session_state:
-            setattr(st.session_state, k, None if k != "_did_filter" else "All")
+            if k == "_did_filter":
+                st.session_state[k] = "All"
+            elif k in ("_selected_dids",):
+                st.session_state[k] = set()
+            else:
+                st.session_state[k] = None
 
     def refresh_dids():
         with st.spinner("Fetching DIDs..."):
@@ -1128,30 +1133,53 @@ elif page == "ConnexCS DID":
             sq = search_q.strip().lower()
             display = [d for d in display if sq in d["did"].lower()]
 
-        h_cols = st.columns([2, 1.2, 2, 1.2])
-        h_cols[0].markdown("**DID**")
-        h_cols[1].markdown("**Status**")
-        h_cols[2].markdown("**Tags**")
-        h_cols[3].markdown("**Actions**")
+        sel = st.session_state._selected_dids
+
+        h_cols = st.columns([0.4, 2, 1.2, 2, 1.4])
+        h_cols[0].markdown("**✓**")
+        h_cols[1].markdown("**DID**")
+        h_cols[2].markdown("**Status**")
+        h_cols[3].markdown("**Tags**")
+        h_cols[4].markdown("**Actions**")
 
         for d in display:
             did_id = d["id"]
             is_as = bool(d.get("customer_id"))
             tags = d.get("tags") or []
-            cols = st.columns([2, 1.2, 2, 1.2])
-            cols[0].write(d["did"])
+            cols = st.columns([0.4, 2, 1.2, 2, 1.4])
+            if cols[0].checkbox("", value=did_id in sel, key=f"sel_{did_id}", label_visibility="collapsed"):
+                sel.add(did_id)
+            else:
+                sel.discard(did_id)
+            cols[1].write(d["did"])
             bg = "#d1fae5;color:#065f46" if is_as else "#fef3c7;color:#92400e"
-            cols[1].markdown(f"<span class='did-badge' style='background:{bg}'>{'Assigned' if is_as else 'Unassigned'}</span>", unsafe_allow_html=True)
-            cols[2].write(", ".join(tags) if tags else "-")
+            cols[2].markdown(f"<span class='did-badge' style='background:{bg}'>{'Assigned' if is_as else 'Unassigned'}</span>", unsafe_allow_html=True)
+            cols[3].write(", ".join(tags) if tags else "-")
             if is_as:
-                if cols[3].button("Unassign", key=f"u_{did_id}", use_container_width=True):
+                if cols[4].button("Unassign", key=f"u_{did_id}", use_container_width=True):
                     full = did_client.get_did(did_id)
                     full["customer_id"] = None
                     did_client.update_did(did_id, full)
                     refresh_dids(); st.rerun()
             else:
-                if cols[3].button("Assign", key=f"a_{did_id}", use_container_width=True):
+                if cols[4].button("Assign", key=f"a_{did_id}", use_container_width=True):
                     st.session_state._assigning = did_id; st.rerun()
+
+        # ── Bulk actions ──
+        if sel:
+            bc1, bc2, bc3 = st.columns([1.5, 1.5, 1.5])
+            bc1.markdown(f"**{len(sel)} selected**")
+            if bc2.button("Bulk Unassign", use_container_width=True):
+                for sid in list(sel):
+                    full = did_client.get_did(sid)
+                    full["customer_id"] = None
+                    did_client.update_did(sid, full)
+                sel.clear()
+                refresh_dids(); st.rerun()
+            if bc3.button("Bulk Assign", use_container_width=True):
+                st.session_state._bulk_ids = list(sel)
+                st.session_state._bulk_assign = True
+                st.rerun()
 
         # ── Assign form ──
         if st.session_state.get("_assigning"):
@@ -1196,3 +1224,51 @@ elif page == "ConnexCS DID":
                             st.session_state._assigning = None; st.rerun()
                 except Exception as ex:
                     st.error(f"Error: {ex}")
+
+        # ── Bulk assign form ──
+        if st.session_state.get("_bulk_assign"):
+            bulk_ids = st.session_state._bulk_ids
+            st.markdown(f"**Bulk Assign ({len(bulk_ids)} DIDs)**")
+            try:
+                customers = did_client.get_customers()
+                if not customers:
+                    st.error("No customers.")
+                    st.session_state._bulk_assign = False
+                else:
+                    co = {f"{c.get('name') or c.get('company_name') or c.get('email','(no name)')}": c for c in customers}
+                    cust = st.selectbox("Customer", list(co.keys()), key="ba_cust")
+                    customer = co[cust]
+                    ips = did_client.get_customer_ips(customer["id"])
+                    hosts = sorted(set((r.get("fqdn") or r.get("ip") or "").strip() for r in ips if r.get("fqdn") or r.get("ip")))
+                    ho = hosts + ["Custom"]
+                    dl = st.selectbox("Destination", ho, key="ba_dest")
+                    dh = st.text_input("IP/host", key="ba_dh") if dl == "Custom" else dl
+                    nt = st.text_input("Tags to add", key="ba_tags", placeholder="comma-separated")
+                    if st.button("Confirm Bulk Assign", key="ba_confirm", use_container_width=True):
+                        if not dh:
+                            st.warning("Destination required.")
+                        else:
+                            for bid in bulk_ids:
+                                full = did_client.get_did(bid)
+                                full["customer_id"] = customer["id"]
+                                d_num = next((x["did"] for x in dids if x["id"] == bid), bid)
+                                full["destination"] = f"{d_num}@{dh}"
+                                full["destination_type"] = "uri"
+                                if nt:
+                                    for t in [x.strip() for x in nt.split(",") if x.strip()]:
+                                        ex = full.get("tags") or []
+                                        if t not in ex:
+                                            ex.append(t)
+                                        full["tags"] = ex
+                                did_client.update_did(bid, full)
+                            st.success(f"{len(bulk_ids)} DIDs assigned")
+                            st.session_state._bulk_assign = False
+                            st.session_state._bulk_ids = None
+                            st.session_state._selected_dids.clear()
+                            refresh_dids(); st.rerun()
+                    if st.button("Cancel", key="ba_cancel"):
+                        st.session_state._bulk_assign = False
+                        st.session_state._bulk_ids = None
+                        st.rerun()
+            except Exception as ex:
+                st.error(f"Error: {ex}")
