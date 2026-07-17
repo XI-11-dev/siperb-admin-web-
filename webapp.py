@@ -1135,6 +1135,22 @@ elif page == "ConnexCS DID":
 
         sel = st.session_state._selected_dids
 
+        # ── Bulk actions bar (top) ──
+        if sel:
+            bc1, bc2, bc3 = st.columns([1.5, 1.5, 1.5])
+            bc1.markdown(f"**{len(sel)} selected**")
+            if bc2.button("Bulk Unassign", use_container_width=True):
+                for sid in list(sel):
+                    full = did_client.get_did(sid)
+                    full["customer_id"] = None
+                    did_client.update_did(sid, full)
+                sel.clear()
+                refresh_dids(); st.rerun()
+            if bc3.button("Bulk Assign", use_container_width=True):
+                st.session_state._bulk_ids = list(sel)
+                st.session_state._bulk_assign = True
+                st.rerun()
+
         h_cols = st.columns([0.4, 2, 1.2, 2, 1.4])
         h_cols[0].markdown("**✓**")
         h_cols[1].markdown("**DID**")
@@ -1164,22 +1180,6 @@ elif page == "ConnexCS DID":
             else:
                 if cols[4].button("Assign", key=f"a_{did_id}", use_container_width=True):
                     st.session_state._assigning = did_id; st.rerun()
-
-        # ── Bulk actions ──
-        if sel:
-            bc1, bc2, bc3 = st.columns([1.5, 1.5, 1.5])
-            bc1.markdown(f"**{len(sel)} selected**")
-            if bc2.button("Bulk Unassign", use_container_width=True):
-                for sid in list(sel):
-                    full = did_client.get_did(sid)
-                    full["customer_id"] = None
-                    did_client.update_did(sid, full)
-                sel.clear()
-                refresh_dids(); st.rerun()
-            if bc3.button("Bulk Assign", use_container_width=True):
-                st.session_state._bulk_ids = list(sel)
-                st.session_state._bulk_assign = True
-                st.rerun()
 
         # ── Assign form ──
         if st.session_state.get("_assigning"):
