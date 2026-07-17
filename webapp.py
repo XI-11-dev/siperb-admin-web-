@@ -1123,6 +1123,11 @@ elif page == "ConnexCS DID":
         </style>
         """, unsafe_allow_html=True)
 
+        search_q = st.text_input("Search DIDs", placeholder="Filter by DID number...", label_visibility="collapsed")
+        if search_q:
+            sq = search_q.strip().lower()
+            display = [d for d in display if sq in d["did"].lower()]
+
         h_cols = st.columns([2, 1.2, 2, 1.2])
         h_cols[0].markdown("**DID**")
         h_cols[1].markdown("**Status**")
