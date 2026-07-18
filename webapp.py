@@ -448,7 +448,7 @@ elif page == "Audit":
             total = len(users)
             cutoff = datetime.now(timezone.utc) + timedelta(days=config.EXPIRING_SOON_DAYS)
             from audit import parse_date, days_left
-            results = {"no_expiry": [], "expired": [], "soon": [], "healthy": [], "done": 0}
+            results = {"no_expiry": [], "expired": [], "soon": [], "healthy": [], "high_conc": [], "done": 0}
             status_text = st.empty()
             pbar = st.progress(0, text="Auditing...")
             async def process_user(u):
@@ -458,29 +458,30 @@ elif page == "Audit":
                 try:
                     conns = await client.list_connections(uid)
                 except Exception:
-                    return [("no_expiry", (email, "", "fetch failed"))]
+                    return [("no_expiry", (email, "", "fetch failed", 1))]
                 if not conns:
-                    return [("no_expiry", (email, "", "no connections"))]
+                    return [("no_expiry", (email, "", "no connections", 1))]
                 async def resolve(c):
                     name = c.get("Name", "")
                     cid = c.get("ConnectionId")
-                    end = c.get("Expiry", {}).get("End") if isinstance(c.get("Expiry"), dict) else None
-                    if end:
-                        dt = parse_date(end)
-                    else:
-                        try:
-                            detail = await client.get_connection(uid, cid)
-                            end = detail.get("Expiry", {}).get("End")
-                            dt = parse_date(end) if end else None
-                        except Exception:
-                            dt = None
+                    try:
+                        detail = await client.get_connection(uid, cid)
+                    except Exception:
+                        return ("no_expiry", (email, name, "detail fetch failed", 1))
+                    end = detail.get("Expiry", {}).get("End")
+                    dt = parse_date(end) if end else None
+                    conc = detail.get("OutboundCallConcurrency")
+                    try:
+                        conc = int(conc) if conc is not None else 1
+                    except (ValueError, TypeError):
+                        conc = 1
                     if dt is None:
-                        return ("no_expiry", (email, name, cid))
+                        return ("no_expiry", (email, name, cid, conc))
                     elif days_left(dt) < 0:
-                        return ("expired", (email, name, cid, dt))
+                        return ("expired", (email, name, cid, dt, conc))
                     elif dt <= cutoff:
-                        return ("soon", (email, name, cid, dt))
-                    return ("healthy", (email, name, cid, dt))
+                        return ("soon", (email, name, cid, dt, conc))
+                    return ("healthy", (email, name, cid, dt, conc))
                 return await asyncio.gather(*[resolve(c) for c in conns])
             tasks = [process_user(u) for u in users]
             for coro in asyncio.as_completed(tasks):
@@ -495,6 +496,9 @@ elif page == "Audit":
                         results["soon"].append(data)
                     elif tag == "healthy" and data:
                         results["healthy"].append(data)
+                        conc = data[-1]
+                        if conc > 1:
+                            results["high_conc"].append(data)
                 pbar.progress(results["done"] / total)
             status_text.empty()
             pbar.empty()
@@ -503,14 +507,15 @@ elif page == "Audit":
         results["expired"].sort(key=lambda x: x[3])
         results["soon"].sort(key=lambda x: x[3])
         results["healthy"].sort(key=lambda x: x[3])
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Total", total)
         col2.metric("Expired", len(results["expired"]))
         col3.metric("Expiring Soon", len(results["soon"]))
         col4.metric("Healthy", len(results["healthy"]))
+        col5.metric("High Concurrency", len(results["high_conc"]))
         if results["no_expiry"]:
             with st.expander(f"Missing Expiry ({len(results['no_expiry'])})", expanded=True):
-                for e, n, r in results["no_expiry"]:
+                for e, n, r, _ in results["no_expiry"]:
                     st.warning(f"**{e}** — {n} ({r})")
         def fmt_expiry(dt):
             now = datetime.now(timezone.utc)
@@ -525,22 +530,28 @@ elif page == "Audit":
             if d > 0:
                 return f"{d}d {h}h"
             return f"{h}h {m}m"
+        if results["high_conc"]:
+            with st.expander(f"High Concurrency ({len(results['high_conc'])})", expanded=True):
+                st.dataframe(
+                    [{"Email": e, "Connection": n, "Concurrency": c} for e, n, _, _, c in results["high_conc"]],
+                    use_container_width=True, hide_index=True
+                )
         if results["expired"]:
             with st.expander(f"Expired ({len(results['expired'])})", expanded=True):
                 st.dataframe(
-                    [{"Email": e, "Connection": n, "Status": fmt_expiry(d)} for e, n, _, d in results["expired"]],
+                    [{"Email": e, "Connection": n, "Status": fmt_expiry(d)} for e, n, _, d, _ in results["expired"]],
                     use_container_width=True, hide_index=True
                 )
         if results["soon"]:
             with st.expander(f"Expiring Soon ({len(results['soon'])})", expanded=True):
                 rows = []
-                for e, n, _, d in results["soon"]:
+                for e, n, _, d, _ in results["soon"]:
                     rows.append({"Email": e, "Connection": n, "Remaining": fmt_expiry(d)})
                 st.dataframe(rows, use_container_width=True, hide_index=True)
         if search_q.strip() and results["healthy"]:
             with st.expander(f"Healthy ({len(results['healthy'])})", expanded=False):
                 st.dataframe(
-                    [{"Email": e, "Connection": n, "Remaining": fmt_expiry(d)} for e, n, _, d in results["healthy"]],
+                    [{"Email": e, "Connection": n, "Remaining": fmt_expiry(d)} for e, n, _, d, _ in results["healthy"]],
                     use_container_width=True, hide_index=True
                 )
         is_filtered = search_q.strip()
