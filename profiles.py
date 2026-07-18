@@ -39,6 +39,7 @@ def build_connection_payload(profile, expiry_time):
         "Disabled": False,
         "AllowSrc": ["0.0.0.0/0"],
         "CustomHeaders": [],
+        "OutboundCallConcurrency": 1,
         "Expiry": {"End": expiry_time.isoformat().replace("+00:00", "Z")},
         "Registration": {
             "registrar": "",
