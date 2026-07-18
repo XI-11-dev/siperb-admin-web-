@@ -402,8 +402,8 @@ with st.sidebar:
     st.markdown("---")
     pages = [
         "Dashboard", "Create User", "Extend Expiry", "Delete User",
-        "Refresh Connection", "Change Caller ID", "Audit",
-        "Send Notifications", "ConnexCS DID",
+        "Edit Connection", "Refresh Connection", "Change Caller ID",
+        "Audit", "Send Notifications", "ConnexCS DID",
     ]
     page = st.radio("", pages, key="nav", label_visibility="collapsed")
     st.markdown("---")
@@ -713,6 +713,49 @@ elif page == "Delete User":
                     st.warning(f"{email}: {detail}")
                 else:
                     st.error(f"{email}: {detail}")
+
+# ══════════════════════════════════════════════════════════════
+elif page == "Edit Connection":
+    st.title("Edit Connection")
+    email = st.text_input("User email", placeholder="user@example.com")
+    if email:
+        client = get_client()
+        with st.spinner("Fetching connections..."):
+            async def fetch_conns():
+                all_users = await client.get_users()
+                user = await client.find_user(email, all_users)
+                if not user:
+                    return None, [], "User not found"
+                uid = user["UserId"]
+                conns = await client.list_connections(uid)
+                return uid, conns, None
+            uid, conns, err = run(fetch_conns())
+        if err:
+            st.error(err)
+        elif not conns:
+            st.info("No connections for this user.")
+        else:
+            co = {f"{c.get('Name','?')} ({c.get('ConnectionId','')[:8]}...)" : c for c in conns}
+            sel_name = st.selectbox("Select connection", list(co.keys()), key="ec_sel")
+            conn = co[sel_name]
+            cid = conn["ConnectionId"]
+            with st.spinner("Fetching connection details..."):
+                async def fetch_detail():
+                    return await client.get_connection(uid, cid)
+                detail = run(fetch_detail())
+            if detail:
+                cur_type = detail.get("Type", "")
+                cur_conc = detail.get("OutboundCallConcurrency", "")
+                new_type = st.text_input("Type", value=cur_type, key="ec_type")
+                new_conc = st.number_input("OutboundCallConcurrency", value=int(cur_conc) if isinstance(cur_conc, (int, float)) or (isinstance(cur_conc, str) and cur_conc.isdigit()) else 1, min_value=1, step=1, key="ec_conc")
+                if st.button("Update Connection", type="primary", use_container_width=True):
+                    detail["Type"] = new_type
+                    detail["OutboundCallConcurrency"] = new_conc
+                    try:
+                        run(client.update_connection(uid, cid, detail))
+                        st.success(f"Connection {cid[:8]}... updated")
+                    except Exception as ex:
+                        st.error(f"Error: {ex}")
 
 # ══════════════════════════════════════════════════════════════
 elif page == "Refresh Connection":
