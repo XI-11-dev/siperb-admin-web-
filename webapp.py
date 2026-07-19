@@ -472,9 +472,9 @@ elif page == "Audit":
                     dt = parse_date(end) if end else None
                     conc = detail.get("OutboundCallConcurrency")
                     try:
-                        conc = int(conc) if conc is not None else 1
+                        conc = int(conc) if conc is not None else 999
                     except (ValueError, TypeError):
-                        conc = 1
+                        conc = 999
                     if dt is None:
                         return ("no_expiry", (email, name, cid, conc))
                     elif days_left(dt) < 0:
@@ -497,7 +497,7 @@ elif page == "Audit":
                     elif tag == "healthy" and data:
                         results["healthy"].append(data)
                         conc = data[-1]
-                        if conc > 1:
+                        if conc != 1:
                             results["high_conc"].append(data)
                 pbar.progress(results["done"] / total)
             status_text.empty()
@@ -533,7 +533,7 @@ elif page == "Audit":
         if results["high_conc"]:
             with st.expander(f"High Concurrency ({len(results['high_conc'])})", expanded=True):
                 st.dataframe(
-                    [{"Email": e, "Connection": n, "Concurrency": c} for e, n, _, _, c in results["high_conc"]],
+                    [{"Email": e, "Connection": n, "Concurrency": "null (unlimited)" if c == 999 else str(c)} for e, n, _, _, c in results["high_conc"]],
                     use_container_width=True, hide_index=True
                 )
         if results["expired"]:
