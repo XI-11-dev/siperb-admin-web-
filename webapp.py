@@ -729,74 +729,134 @@ elif page == "Delete User":
 elif page == "Edit Connection":
     st.title("Edit Connection")
     client = get_client()
-    email = st.text_input("User email", placeholder="user@example.com")
-    if st.button("Load Connections", type="primary"):
-        if not email.strip():
-            st.warning("Enter an email.")
-        else:
-            with st.spinner("Fetching connections..."):
-                async def fetch_conns():
-                    all_users = await client.get_users()
-                    user = await client.find_user(email.strip(), all_users)
-                    if not user:
-                        return None, [], "User not found"
-                    uid = user["UserId"]
-                    conns = await client.list_connections(uid)
-                    return uid, conns, None
-                uid, conns, err = run(fetch_conns())
-            if err:
-                st.error(err)
-            elif not conns:
-                st.info("No connections for this user.")
+    mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True)
+
+    if mode == "Bulk":
+        emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com")
+        ec_value = st.number_input("OutboundCallConcurrency", value=1, min_value=1, step=1, key="ec_bulk_val")
+        confirm = st.checkbox("I confirm I want to update concurrency for the above users")
+        if st.button("Bulk Update", type="primary"):
+            if not emails_raw.strip():
+                st.warning("Enter at least one email.")
+            elif not confirm:
+                st.warning("Please confirm.")
             else:
-                st.session_state._ec_uid = uid
-                st.session_state._ec_conns = conns
-                st.session_state.ec_detail = None
-                st.session_state._ec_cid = None
-                st.rerun()
-
-    if st.session_state.get("_ec_uid"):
-        uid = st.session_state._ec_uid
-        conns = st.session_state._ec_conns
-        co = {f"{c.get('Name','?')} ({c.get('ConnectionId','')[:8]}...)" : c for c in conns}
-        sel_name = st.selectbox("Select connection", list(co.keys()), key="ec_sel")
-        conn = co[sel_name]
-        cid = conn["ConnectionId"]
-
-        if not st.session_state.get("ec_detail") or st.session_state.get("_ec_cid") != cid:
-            with st.spinner("Fetching details..."):
-                async def fetch_detail():
-                    return await client.get_connection(uid, cid)
-                st.session_state.ec_detail = run(fetch_detail())
-                st.session_state._ec_cid = cid
-
-        detail = st.session_state.ec_detail
-        if detail:
-            cur_type = detail.get("Type", "")
-            cur_conc = detail.get("OutboundCallConcurrency", "")
-            new_type = st.text_input("Type", value=cur_type, key="ec_type")
-            try:
-                cur_conc_val = int(cur_conc) if cur_conc is not None else 1
-            except (ValueError, TypeError):
-                cur_conc_val = 1
-            new_conc = st.number_input("OutboundCallConcurrency", value=cur_conc_val, min_value=1, step=1, key="ec_conc")
-            if st.button("Update Connection", type="primary", use_container_width=True):
-                detail["Type"] = new_type
-                detail["OutboundCallConcurrency"] = new_conc
-                try:
-                    run(client.update_connection(uid, cid, detail))
-                    st.success(f"Connection {cid[:8]}... updated")
+                lines = parse_emails(emails_raw)
+                results = []
+                with st.spinner("Updating..."):
+                    async def run_bulk():
+                        all_users = await client.get_users()
+                        async def fix_one(email):
+                            user = await client.find_user(email, all_users)
+                            if not user:
+                                return (email, "failed", "user not found")
+                            uid = user["UserId"]
+                            try:
+                                conns = await client.list_connections(uid)
+                            except Exception:
+                                return (email, "failed", "connections fetch failed")
+                            if not conns:
+                                return (email, "warning", "no connections")
+                            for c in conns:
+                                cid = c.get("ConnectionId")
+                                if not cid:
+                                    continue
+                                try:
+                                    detail = await client.get_connection(uid, cid)
+                                    detail["OutboundCallConcurrency"] = ec_value
+                                    await client.update_connection(uid, cid, detail)
+                                except Exception:
+                                    return (email, "failed", f"failed on {cid[:8]}")
+                            return (email, "success", f"{len(conns)} connection(s) updated")
+                        tasks = [fix_one(e) for e in lines]
+                        for coro in asyncio.as_completed(tasks):
+                            results.append(await coro)
+                    run(run_bulk())
+                st.markdown("---")
+                st.subheader("Results")
+                success = sum(1 for _, r, _ in results if r == "success")
+                warns = sum(1 for _, r, _ in results if r == "warning")
+                failed = sum(1 for _, r, _ in results if r == "failed")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Successful", success)
+                col2.metric("Warnings", warns)
+                col3.metric("Failed", failed)
+                for email, status, detail in results:
+                    if status == "success":
+                        st.success(f"{email}: {detail}")
+                    elif status == "warning":
+                        st.warning(f"{email}: {detail}")
+                    else:
+                        st.error(f"{email}: {detail}")
+    else:
+        email = st.text_input("User email", placeholder="user@example.com")
+        if st.button("Load Connections", type="primary"):
+            if not email.strip():
+                st.warning("Enter an email.")
+            else:
+                with st.spinner("Fetching connections..."):
+                    async def fetch_conns():
+                        all_users = await client.get_users()
+                        user = await client.find_user(email.strip(), all_users)
+                        if not user:
+                            return None, [], "User not found"
+                        uid = user["UserId"]
+                        conns = await client.list_connections(uid)
+                        return uid, conns, None
+                    uid, conns, err = run(fetch_conns())
+                if err:
+                    st.error(err)
+                elif not conns:
+                    st.info("No connections for this user.")
+                else:
+                    st.session_state._ec_uid = uid
+                    st.session_state._ec_conns = conns
                     st.session_state.ec_detail = None
                     st.session_state._ec_cid = None
                     st.rerun()
-                except Exception as ex:
-                    st.error(f"Error: {ex}")
-            if st.button("Clear", use_container_width=True):
-                st.session_state._ec_uid = None
-                st.session_state._ec_conns = None
-                st.session_state.ec_detail = None
-                st.session_state._ec_cid = None
-                st.rerun()
+
+        if st.session_state.get("_ec_uid"):
+            uid = st.session_state._ec_uid
+            conns = st.session_state._ec_conns
+            co = {f"{c.get('Name','?')} ({c.get('ConnectionId','')[:8]}...)" : c for c in conns}
+            sel_name = st.selectbox("Select connection", list(co.keys()), key="ec_sel")
+            conn = co[sel_name]
+            cid = conn["ConnectionId"]
+
+            if not st.session_state.get("ec_detail") or st.session_state.get("_ec_cid") != cid:
+                with st.spinner("Fetching details..."):
+                    async def fetch_detail():
+                        return await client.get_connection(uid, cid)
+                    st.session_state.ec_detail = run(fetch_detail())
+                    st.session_state._ec_cid = cid
+
+            detail = st.session_state.ec_detail
+            if detail:
+                cur_type = detail.get("Type", "")
+                cur_conc = detail.get("OutboundCallConcurrency", "")
+                new_type = st.text_input("Type", value=cur_type, key="ec_type")
+                try:
+                    cur_conc_val = int(cur_conc) if cur_conc is not None else 1
+                except (ValueError, TypeError):
+                    cur_conc_val = 1
+                new_conc = st.number_input("OutboundCallConcurrency", value=cur_conc_val, min_value=1, step=1, key="ec_conc")
+                if st.button("Update Connection", type="primary", use_container_width=True):
+                    detail["Type"] = new_type
+                    detail["OutboundCallConcurrency"] = new_conc
+                    try:
+                        run(client.update_connection(uid, cid, detail))
+                        st.success(f"Connection {cid[:8]}... updated")
+                        st.session_state.ec_detail = None
+                        st.session_state._ec_cid = None
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error: {ex}")
+                if st.button("Clear", use_container_width=True):
+                    st.session_state._ec_uid = None
+                    st.session_state._ec_conns = None
+                    st.session_state.ec_detail = None
+                    st.session_state._ec_cid = None
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 elif page == "Refresh Connection":
