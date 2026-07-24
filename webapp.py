@@ -983,23 +983,25 @@ elif page == "Enable Voicemail":
                         emails = [u.get("UserEmail", "") for u in all_users]
                     else:
                         emails = parse_emails(emails_raw)
+                    sem = asyncio.Semaphore(5)
                     async def enable_vm(email):
-                        user = await find_user(client, email, all_users)
-                        if not user:
-                            return (email, "failed", "user not found")
-                        uid = user["UserId"]
-                        try:
-                            await client.request("PUT", f"{base}/{uid}",
-                                                 json={"EnableDomainAdmin": False, "EnableVoicemail": True})
-                            await client.request("PUT", f"{base}/{uid}/Voicemail/",
-                                                 json={"Enabled": True, "Timeout": 30, "pin": 999,
-                                                       "EnableVoceimailNotify": True, "EnableWhatsAppNotify": False,
-                                                       "EnableTelegramNotify": False, "EnabledTranscribe": True})
-                            return (email, "success", "voicemail enabled")
-                        except ApiError as e:
-                            return (email, "failed", f"API error: {e.status}")
-                        except Exception as e:
-                            return (email, "failed", str(e))
+                        async with sem:
+                            user = await find_user(client, email, all_users)
+                            if not user:
+                                return (email, "failed", "user not found")
+                            uid = user["UserId"]
+                            try:
+                                await client.request("PUT", f"{base}/{uid}",
+                                                     json={"EnableDomainAdmin": False, "EnableVoicemail": True})
+                                await client.request("PUT", f"{base}/{uid}/Voicemail/",
+                                                     json={"Enabled": True, "Timeout": 30, "pin": 999,
+                                                           "EnableVoceimailNotify": True, "EnableWhatsAppNotify": False,
+                                                           "EnableTelegramNotify": False, "EnabledTranscribe": True})
+                                return (email, "success", "voicemail enabled")
+                            except ApiError as e:
+                                return (email, "failed", f"API error: {e.status} {e.text[:100] if e.text else ''}")
+                            except Exception as e:
+                                return (email, "failed", str(e))
                     tasks = [enable_vm(e) for e in emails]
                     for coro in asyncio.as_completed(tasks):
                         results.append(await coro)
