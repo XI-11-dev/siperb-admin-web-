@@ -403,7 +403,7 @@ with st.sidebar:
     pages = [
         "Dashboard", "Create User", "Extend Expiry", "Delete User",
         "Edit Connection", "Refresh Connection", "Change Caller ID",
-        "Audit", "Send Notifications", "ConnexCS DID",
+        "Enable Voicemail", "Audit", "Send Notifications", "ConnexCS DID",
     ]
     page = st.radio("", pages, key="nav", label_visibility="collapsed")
     st.markdown("---")
@@ -957,6 +957,65 @@ elif page == "Change Caller ID":
                             st.warning(f"{email}: {detail}")
                         else:
                             st.error(f"{email}: {detail}")
+
+# ══════════════════════════════════════════════════════════════
+elif page == "Enable Voicemail":
+    st.title("Enable Voicemail")
+    mode = st.radio("Mode", ["All Users", "Specific Users"], horizontal=True)
+    if mode == "Specific Users":
+        emails_raw = st.text_area("Email(s) — one per line", placeholder="user@example.com", height=68)
+    else:
+        emails_raw = ""
+    confirm = st.checkbox("I confirm I want to enable voicemail for the above users")
+    if st.button("Enable Voicemail", type="primary"):
+        if mode == "Specific Users" and not emails_raw.strip():
+            st.warning("Enter at least one email.")
+        elif not confirm:
+            st.warning("Please confirm.")
+        else:
+            client = get_client()
+            results = []
+            with st.spinner("Enabling voicemail..."):
+                async def run_vm():
+                    base = f"/Users/{client.owner_user_id}/DomainUsers"
+                    all_users = await client.get_users()
+                    if mode == "All Users":
+                        emails = [u.get("UserEmail", "") for u in all_users]
+                    else:
+                        emails = parse_emails(emails_raw)
+                    async def enable_vm(email):
+                        user = await find_user(client, email, all_users)
+                        if not user:
+                            return (email, "failed", "user not found")
+                        uid = user["UserId"]
+                        try:
+                            await client.request("PUT", f"{base}/{uid}",
+                                                 json={"EnableDomainAdmin": False, "EnableVoicemail": True})
+                            await client.request("PUT", f"{base}/{uid}/Voicemail/",
+                                                 json={"Enabled": True, "Timeout": 30, "pin": 999,
+                                                       "EnableVoceimailNotify": True, "EnableWhatsAppNotify": False,
+                                                       "EnableTelegramNotify": False, "EnabledTranscribe": True})
+                            return (email, "success", "voicemail enabled")
+                        except ApiError as e:
+                            return (email, "failed", f"API error: {e.status}")
+                        except Exception as e:
+                            return (email, "failed", str(e))
+                    tasks = [enable_vm(e) for e in emails]
+                    for coro in asyncio.as_completed(tasks):
+                        results.append(await coro)
+                run(run_vm())
+            st.markdown("---")
+            st.subheader("Results")
+            success = sum(1 for _, r, _ in results if r == "success")
+            failed = sum(1 for _, r, _ in results if r == "failed")
+            col1, col2 = st.columns(2)
+            col1.metric("Successful", success)
+            col2.metric("Failed", failed)
+            for email, status, detail in results:
+                if status == "success":
+                    st.success(f"{email}: {detail}")
+                else:
+                    st.error(f"{email}: {detail}")
 
 # ══════════════════════════════════════════════════════════════
 elif page == "Send Notifications":
