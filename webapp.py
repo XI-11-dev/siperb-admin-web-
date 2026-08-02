@@ -1576,7 +1576,16 @@ div[data-testid="stTextInput"] input { font-size: 16px !important; min-height: 4
                     if entry.get("method") == "INVITE":
                         fu = entry.get("from_user", "")
                         if fu:
+                            st.subheader("Caller Info")
                             st.info(f"CLI: {fu}")
+                            try:
+                                dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
+                                for dd2 in dd:
+                                    tt = dd2.get("tags", [])
+                                    if tt:
+                                        st.info(f"Tags: [{', '.join(tt)}]")
+                            except Exception:
+                                pass
                         break
             except Exception:
                 pass
