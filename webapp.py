@@ -418,17 +418,21 @@ if page == "Dashboard":
         st.warning("ConnexCS credentials not set in Streamlit Secrets — ConnexCS DID won't work.")
     try:
         client = get_client()
-        billing, owner = run(asyncio.gather(
+        billing, users = run(asyncio.gather(
             client.request("GET", f"/Users/{client.owner_user_id}/Billing"),
-            client.get_owner_profile(),
+            client.get_users(),
         ))
-        subs = billing.get("Subscriptions", [])
-        total = subs[0].get("Quantity", "?") if subs else "?"
-        dus = owner.get("DomainUsers", [])
-        occ = len(dus) if isinstance(dus, list) else 0
+        inventory = billing.get("Inventory", {}) if isinstance(billing, dict) else {}
+        avail = 0
+        if isinstance(inventory, dict):
+            for item in inventory.values():
+                value = item.get("available") if isinstance(item, dict) else None
+                if isinstance(value, int):
+                    avail += value
+        occ = len(users) if isinstance(users, list) else 0
+        total = occ + avail
         col1, col2, col3 = st.columns(3)
         col1.metric("Seats Used", occ)
-        avail = int(total) - occ if isinstance(total, int) else "?"
         col2.metric("Total Seats", total)
         col3.metric("Available", avail)
     except Exception as e:
