@@ -1,10 +1,12 @@
 import asyncio
+import hashlib
 import html
 import io
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone, timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from client import SiperbClient, ApiError
 import config
@@ -40,17 +42,46 @@ hr { border-color: #e0e0e0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Login gate ──────────────────────────────────────────────
+# ── Login gate with cookie "remember me" ────────────────────
+LOGIN_PWD = "0308"
+
+def _auth_token(pwd):
+    return hashlib.sha256(("siperb:" + pwd).encode()).hexdigest()[:24]
+
 if "_auth" not in st.session_state:
     st.session_state._auth = False
 
+# If the URL carries an auth token, validate it immediately (set by JS below).
 if not st.session_state._auth:
+    try:
+        v = st.query_params.get("siperb_auth")
+        if isinstance(v, list):
+            v = v[0] if v else None
+        if v and v == _auth_token(LOGIN_PWD):
+            st.session_state._auth = True
+    except Exception:
+        pass
+
+if not st.session_state._auth:
+    # One-time handshake: read the auth cookie and append it to the URL so
+    # Streamlit's Python side can see it. Skipped once the token is present.
+    components.html("""<script>
+        const c = document.cookie.split('; ').find(x => x.indexOf('siperb_auth=') === 0);
+        if (c && window.parent.location.search.indexOf('siperb_auth=') === -1) {
+            const token = c.split('=')[1];
+            const base = window.parent.location.origin + window.parent.location.pathname;
+            window.parent.location.replace(base + '?siperb_auth=' + token);
+        }
+        </script>""", height=0, width=0)
     st.title("Eleven Solutions LLC")
     st.markdown("### Login")
     pwd = st.text_input("Password", type="password")
     if st.button("Login", type="primary"):
-        if pwd == "0308":
+        if pwd == LOGIN_PWD:
             st.session_state._auth = True
+            components.html(
+                f"<script>document.cookie='siperb_auth={_auth_token(LOGIN_PWD)};max-age=2592000;path=/;samesite=lax';</script>",
+                height=0, width=0)
             st.rerun()
         else:
             st.error("Incorrect password.")
@@ -422,6 +453,14 @@ with st.sidebar:
     page = st.radio("", pages, key="nav", label_visibility="collapsed")
     st.markdown("---")
     st.caption("v6.4 Web")
+    if st.button("Logout", use_container_width=True):
+        components.html("<script>document.cookie='siperb_auth=;max-age=0;path=/;samesite=lax';</script>", height=0, width=0)
+        st.session_state._auth = False
+        try:
+            del st.query_params["siperb_auth"]
+        except Exception:
+            pass
+        st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 if page == "Dashboard":
