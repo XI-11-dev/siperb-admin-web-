@@ -1,4 +1,5 @@
 import asyncio
+import html
 import io
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone, timedelta
@@ -63,6 +64,18 @@ asyncio.set_event_loop(loop)
 
 def run(coro):
     return loop.run_until_complete(coro)
+
+def _fmt_ts(dt):
+    if not dt:
+        return ""
+    try:
+        s = str(dt)
+        if "T" in s or s.endswith("Z"):
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return d.strftime("%b %d, %I:%M %p")
+    except Exception:
+        pass
+    return str(dt)[:19]
 
 def parse_emails(raw):
     """Support comma-separated and/or newline-separated emails."""
@@ -1453,52 +1466,78 @@ elif page == "ConnexCS DID":
 # ══════════════════════════════════════════════════════════════
 elif page == "Transcription":
     st.title("Call Transcription")
+    st.caption("Mobile-friendly view — read call transcripts on the go.")
     if not config.CONNEXCS_USERNAME or not config.CONNEXCS_PASSWORD:
         st.warning("ConnexCS credentials not set in Streamlit Secrets.")
     else:
+        st.markdown("""
+<style>
+div[data-testid="stTextInput"] input { font-size: 16px !important; min-height: 46px !important; }
+.stButton > button { min-height: 46px !important; font-size: 16px !important; }
+.ts-wrap { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.ts-bubble { border-radius: 12px; padding: 8px 12px; max-width: 88%; font-size: 15px; line-height: 1.45; word-wrap: break-word; overflow-wrap: break-word; }
+.ts-caller { background: #FF6B00; color: #fff !important; margin-left: auto; }
+.ts-agent { background: #ececec; color: #000 !important; }
+.ts-meta { font-size: 11px; opacity: .85; margin-bottom: 3px; }
+</style>
+""", unsafe_allow_html=True)
         did_client = ConnexCSClient()
-        callid = st.text_input("Call ID", placeholder="e.g. f3q7cu3jrkhuneuh40vp")
-        if callid and st.button("Fetch Transcript", type="primary"):
-            with st.spinner("Fetching..."):
+        callid = st.text_input("Call ID", placeholder="e.g. f3q7cu3jrkhuneuh40vp", key="ts_callid")
+        if callid and st.button("Fetch Transcript", type="primary", use_container_width=True):
+            with st.spinner("Fetching transcript..."):
                 try:
                     trans = did_client._get("/api/cp/transcribe", params={"callid": callid, "_limit": 500}, timeout=30)
                     if not trans:
                         st.warning("No transcript found.")
+                        st.session_state.pop("ts_result", None)
                     else:
                         segments = sorted(trans, key=lambda x: x.get("dt", ""))
-                        st.metric("Segments", len(segments))
-                        seen_carriers = set()
-                        carrier_rows = []
-                        for t in segments:
-                            pid = t.get("provider_id")
-                            if pid and pid not in seen_carriers:
-                                seen_carriers.add(pid)
-                                name = did_client.get_carrier_name(pid)
-                                carrier_rows.append({"Provider ID": pid, "Carrier": name or "?"})
-                        if carrier_rows:
-                            st.subheader("Carrier(s) that accepted the call")
-                            st.dataframe(carrier_rows, use_container_width=True, hide_index=True)
-                        st.subheader("Transcript")
-                        for t in segments:
-                            leg = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
-                            st.code(f"[{t.get('dt', '?')}] ({leg}) {t.get('text', '')}")
-                        try:
-                            trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
-                            for entry in trace if isinstance(trace, list) else []:
-                                if entry.get("method") == "INVITE":
-                                    fu = entry.get("from_user", "")
-                                    if fu:
-                                        st.info(f"CLI: {fu}")
-                                        try:
-                                            dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
-                                            for dd2 in dd:
-                                                tt = dd2.get("tags", [])
-                                                if tt:
-                                                    st.info(f"Tags: [{', '.join(tt)}]")
-                                        except Exception:
-                                            pass
-                                    break
-                        except Exception:
-                            pass
+                        st.session_state["ts_result"] = segments
                 except Exception as ex:
                     st.error(f"Error: {ex}")
+
+        result = st.session_state.get("ts_result")
+        if result:
+            st.markdown(f"**{len(result)} segments**")
+            seen_carriers = set()
+            carrier_rows = []
+            for t in result:
+                pid = t.get("provider_id")
+                if pid and pid not in seen_carriers:
+                    seen_carriers.add(pid)
+                    name = did_client.get_carrier_name(pid)
+                    carrier_rows.append({"Provider ID": pid, "Carrier": name or "?"})
+            if carrier_rows:
+                st.subheader("Carrier(s)")
+                st.dataframe(carrier_rows, use_container_width=True, hide_index=True)
+            st.subheader("Transcript")
+            html_parts = ['<div class="ts-wrap">']
+            text_parts = []
+            for t in result:
+                leg = str(t.get("leg")) == "1"
+                role = "CALLER" if leg else "AGENT"
+                ts = _fmt_ts(t.get("dt"))
+                txt = str(t.get("text", ""))
+                meta = f'<div class="ts-meta">{role} · {ts}</div>' if ts else f'<div class="ts-meta">{role}</div>'
+                cls = "ts-caller" if leg else "ts-agent"
+                html_parts.append(f'<div class="ts-bubble {cls}">{meta}{html.escape(txt)}</div>')
+                text_parts.append(f"[{ts or '?'}] ({role}) {txt}")
+            html_parts.append("</div>")
+            st.markdown("".join(html_parts), unsafe_allow_html=True)
+            st.download_button(
+                "Download transcript (.txt)",
+                data="\n".join(text_parts),
+                file_name=f"transcript_{callid}.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+            try:
+                trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
+                for entry in trace if isinstance(trace, list) else []:
+                    if entry.get("method") == "INVITE":
+                        fu = entry.get("from_user", "")
+                        if fu:
+                            st.info(f"CLI: {fu}")
+                        break
+            except Exception:
+                pass
