@@ -39,6 +39,21 @@ hr { border-color: #e0e0e0 !important; }
 .stError { background: #f8d7da !important; color: #721c24 !important; }
 .stWarning { background: #fff3cd !important; color: #856404 !important; }
 .stInfo { background: #e2f0fb !important; border: 1px solid #b3d7ff !important; color: #004085 !important; }
+@media (max-width: 768px) {
+    .main .block-container { padding: 0.6rem 0.8rem !important; max-width: 100% !important; }
+    div[data-testid="stHorizontalBlock"] { flex-direction: column !important; align-items: stretch !important; }
+    div[data-testid="stHorizontalBlock"] > div { width: 100% !important; min-width: 0 !important; flex: none !important; }
+    .stButton > button, .stDownloadButton > button { min-height: 46px !important; font-size: 16px !important; width: 100% !important; }
+    div[data-testid="stTextInput"] input, div[data-testid="stTextArea"] textarea, div[data-testid="stNumberInput"] input,
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] > div, div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+    div[data-testid="stDateInput"] input { font-size: 16px !important; min-height: 46px !important; }
+    div[data-testid="stMetric"] { padding: 8px !important; }
+    .stText, .stMarkdown p, pre, code { white-space: pre-wrap !important; word-break: break-word !important; }
+    h1 { font-size: 1.6em !important; }
+    h2 { font-size: 1.3em !important; }
+    div[data-testid="stDataFrame"] { max-width: 100% !important; overflow-x: auto !important; }
+    section[data-testid="stSidebar"] { width: 100% !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -120,6 +135,35 @@ def get_client():
         run(c.login())
         st.session_state._client = c
     return st.session_state._client
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_domain_users(owner_user_id):
+    c = SiperbClient()
+    lo = asyncio.new_event_loop()
+    try:
+        lo.run_until_complete(c.login())
+        return lo.run_until_complete(c.get_users())
+    finally:
+        try:
+            lo.run_until_complete(c.close())
+        except Exception:
+            pass
+        lo.close()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_billing(owner_user_id):
+    c = SiperbClient()
+    lo = asyncio.new_event_loop()
+    try:
+        lo.run_until_complete(c.login())
+        return lo.run_until_complete(
+            c.request("GET", f"/Users/{owner_user_id}/Billing"))
+    finally:
+        try:
+            lo.run_until_complete(c.close())
+        except Exception:
+            pass
+        lo.close()
 
 # ── Send log (in-memory for cloud) ───────────────────────────
 def get_send_log():
@@ -440,27 +484,26 @@ async def change_caller_id_one(client, email, new_cid, users=None):
 # ── Notification helpers (web-native) ─────────────────────────
 from notify import fetch_template, render_template, send_email, fmt_date, fmt_duration, audit_due, resolve_custom_email
 
-# ── Sidebar ──────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("<h1 style='color:#FF6B00;'>Eleven</h1>", unsafe_allow_html=True)
-    st.markdown("---")
-    pages = [
-        "Dashboard", "Create User", "Extend Expiry", "Delete User",
-        "Edit Connection", "Refresh Connection", "Change Caller ID",
-        "Enable Voicemail", "Audit", "Send Notifications",
-        "ConnexCS DID", "Transcription",
-    ]
-    page = st.radio("", pages, key="nav", label_visibility="collapsed")
-    st.markdown("---")
-    st.caption("v6.4 Web")
-    if st.button("Logout", use_container_width=True):
-        components.html("<script>document.cookie='siperb_auth=;max-age=0;path=/;samesite=lax';</script>", height=0, width=0)
-        st.session_state._auth = False
-        try:
-            del st.query_params["siperb_auth"]
-        except Exception:
-            pass
-        st.rerun()
+# ── Header / Navigation ──────────────────────────────────────
+pages = [
+    "Dashboard", "Create User", "Extend Expiry", "Delete User",
+    "Edit Connection", "Refresh Connection", "Change Caller ID",
+    "Enable Voicemail", "Audit", "Send Notifications",
+    "ConnexCS DID", "Transcription",
+]
+h1, h2 = st.columns([4, 1])
+h1.markdown("<h1 style='color:#FF6B00;'>Eleven</h1>", unsafe_allow_html=True)
+if h2.button("Logout", use_container_width=True):
+    components.html("<script>document.cookie='siperb_auth=;max-age=0;path=/;samesite=lax';</script>", height=0, width=0)
+    st.session_state._auth = False
+    try:
+        del st.query_params["siperb_auth"]
+    except Exception:
+        pass
+    st.rerun()
+page = st.selectbox("Menu", pages, key="nav", label_visibility="collapsed")
+st.caption("v6.4 Web — Eleven Solutions LLC")
+st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════
 if page == "Dashboard":
@@ -471,10 +514,8 @@ if page == "Dashboard":
         st.warning("ConnexCS credentials not set in Streamlit Secrets — ConnexCS DID won't work.")
     try:
         client = get_client()
-        billing, users = run(asyncio.gather(
-            client.request("GET", f"/Users/{client.owner_user_id}/Billing"),
-            client.get_users(),
-        ))
+        billing = _cached_billing(client.owner_user_id)
+        users = _cached_domain_users(client.owner_user_id)
         inventory = billing.get("Inventory", {}) if isinstance(billing, dict) else {}
         avail = 0
         if isinstance(inventory, dict):
@@ -1345,7 +1386,7 @@ elif page == "ConnexCS DID":
                     else:
                         st.write("No tags to remove.")
         with col_right:
-            st.caption("Transcript lookup is now available from the Transcription page in the sidebar.")
+            st.caption("Transcript lookup is available from the Transcription page in the menu above.")
 
     # ── Unified table ──
     if not dids:
@@ -1364,6 +1405,8 @@ elif page == "ConnexCS DID":
 
         sel = st.session_state._selected_dids
 
+        st.caption("Tick the box to select a DID, then use Bulk Assign / Bulk Unassign above. Tap Assign / Unassign on a row to manage it.")
+
         # ── Bulk actions bar (top) ──
         if sel:
             bc1, bc2, bc3 = st.columns([1.5, 1.5, 1.5])
@@ -1379,13 +1422,6 @@ elif page == "ConnexCS DID":
                 st.session_state._bulk_ids = list(sel)
                 st.session_state._bulk_assign = True
                 st.rerun()
-
-        h_cols = st.columns([0.4, 2, 1.2, 2, 1.4])
-        h_cols[0].markdown("**✓**")
-        h_cols[1].markdown("**DID**")
-        h_cols[2].markdown("**Status**")
-        h_cols[3].markdown("**Tags**")
-        h_cols[4].markdown("**Actions**")
 
         for d in display:
             did_id = d["id"]
