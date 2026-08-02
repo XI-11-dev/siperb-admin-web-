@@ -403,7 +403,8 @@ with st.sidebar:
     pages = [
         "Dashboard", "Create User", "Extend Expiry", "Delete User",
         "Edit Connection", "Refresh Connection", "Change Caller ID",
-        "Enable Voicemail", "Audit", "Send Notifications", "ConnexCS DID",
+        "Enable Voicemail", "Audit", "Send Notifications",
+        "ConnexCS DID", "Transcription",
     ]
     page = st.radio("", pages, key="nav", label_visibility="collapsed")
     st.markdown("---")
@@ -1292,40 +1293,7 @@ elif page == "ConnexCS DID":
                     else:
                         st.write("No tags to remove.")
         with col_right:
-            with st.expander("Pull Call Transcript", expanded=False):
-                callid = st.text_input("Call ID", key="did_ts_id")
-                if callid and st.button("Fetch", key="did_ts_fetch"):
-                    with st.spinner("Fetching..."):
-                        try:
-                            trans = did_client._get("/api/cp/transcribe", params={"callid": callid, "_limit": 500}, timeout=30)
-                            if not trans:
-                                st.warning("No transcript found.")
-                            else:
-                                segments = sorted(trans, key=lambda x: x.get("dt", ""))
-                                st.metric("Segments", len(segments))
-                                for t in segments:
-                                    leg = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
-                                    st.code(f"[{t.get('dt', '?')}] ({leg}) {t.get('text', '')}")
-                                try:
-                                    trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
-                                    for entry in trace if isinstance(trace, list) else []:
-                                        if entry.get("method") == "INVITE":
-                                            fu = entry.get("from_user", "")
-                                            if fu:
-                                                st.info(f"CLI: {fu}")
-                                                try:
-                                                    dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
-                                                    for dd2 in dd:
-                                                        tt = dd2.get("tags", [])
-                                                        if tt:
-                                                            st.info(f"Tags: [{', '.join(tt)}]")
-                                                except Exception:
-                                                    pass
-                                            break
-                                except Exception:
-                                    pass
-                        except Exception as ex:
-                            st.error(f"Error: {ex}")
+            st.caption("Transcript lookup is now available from the Transcription page in the sidebar.")
 
     # ── Unified table ──
     if not dids:
@@ -1481,3 +1449,56 @@ elif page == "ConnexCS DID":
                         st.rerun()
             except Exception as ex:
                 st.error(f"Error: {ex}")
+
+# ══════════════════════════════════════════════════════════════
+elif page == "Transcription":
+    st.title("Call Transcription")
+    if not config.CONNEXCS_USERNAME or not config.CONNEXCS_PASSWORD:
+        st.warning("ConnexCS credentials not set in Streamlit Secrets.")
+    else:
+        did_client = ConnexCSClient()
+        callid = st.text_input("Call ID", placeholder="e.g. f3q7cu3jrkhuneuh40vp")
+        if callid and st.button("Fetch Transcript", type="primary"):
+            with st.spinner("Fetching..."):
+                try:
+                    trans = did_client._get("/api/cp/transcribe", params={"callid": callid, "_limit": 500}, timeout=30)
+                    if not trans:
+                        st.warning("No transcript found.")
+                    else:
+                        segments = sorted(trans, key=lambda x: x.get("dt", ""))
+                        st.metric("Segments", len(segments))
+                        seen_carriers = set()
+                        carrier_rows = []
+                        for t in segments:
+                            pid = t.get("provider_id")
+                            if pid and pid not in seen_carriers:
+                                seen_carriers.add(pid)
+                                name = did_client.get_carrier_name(pid)
+                                carrier_rows.append({"Provider ID": pid, "Carrier": name or "?"})
+                        if carrier_rows:
+                            st.subheader("Carrier(s) that accepted the call")
+                            st.dataframe(carrier_rows, use_container_width=True, hide_index=True)
+                        st.subheader("Transcript")
+                        for t in segments:
+                            leg = "CALLER" if str(t.get("leg")) == "1" else "AGENT"
+                            st.code(f"[{t.get('dt', '?')}] ({leg}) {t.get('text', '')}")
+                        try:
+                            trace = did_client._get("/api/cp/log/trace", params={"callid": callid}, timeout=20)
+                            for entry in trace if isinstance(trace, list) else []:
+                                if entry.get("method") == "INVITE":
+                                    fu = entry.get("from_user", "")
+                                    if fu:
+                                        st.info(f"CLI: {fu}")
+                                        try:
+                                            dd = did_client._get("/api/cp/did", params={"did": fu, "_limit": 5}, timeout=15)
+                                            for dd2 in dd:
+                                                tt = dd2.get("tags", [])
+                                                if tt:
+                                                    st.info(f"Tags: [{', '.join(tt)}]")
+                                        except Exception:
+                                            pass
+                                    break
+                        except Exception:
+                            pass
+                except Exception as ex:
+                    st.error(f"Error: {ex}")

@@ -45,6 +45,18 @@ class ConnexCSClient:
     def get_customer_ips(self, customer_id):
         return self._get("/api/cp/switch/ip", params={"company_id": customer_id, "_limit": 50})
 
+    def get_carrier(self, carrier_id):
+        try:
+            return self._get(f"/api/cp/carrier/{carrier_id}", timeout=15)
+        except Exception:
+            return None
+
+    def get_carrier_name(self, carrier_id):
+        if not carrier_id:
+            return ""
+        c = self.get_carrier(carrier_id)
+        return c.get("name", "") if isinstance(c, dict) else ""
+
     def fetch_all_unassigned(self):
         all_dids = []
         offset = 0
