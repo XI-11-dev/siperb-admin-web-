@@ -489,7 +489,7 @@ pages = [
     "Dashboard", "Create User", "Extend Expiry", "Delete User",
     "Edit Connection", "Refresh Connection", "Change Caller ID",
     "Enable Voicemail", "Audit", "Send Notifications",
-    "ConnexCS DID", "Transcription",
+    "ConnexCS DID", "Transcription", "Export CLIs",
 ]
 h1, h2 = st.columns([4, 1])
 h1.markdown("<h1 style='color:#FF6B00;'>Eleven</h1>", unsafe_allow_html=True)
@@ -1625,3 +1625,65 @@ div[data-testid="stTextInput"] input { font-size: 16px !important; min-height: 4
                         break
             except Exception:
                 pass
+
+# ══════════════════════════════════════════════════════════════
+elif page == "Export CLIs":
+    st.title("Export CLIs")
+    st.caption("Pulls every user's connection and extracts the CLI (caller ID) into a CSV.")
+    if st.button("Generate CSV", type="primary"):
+        client = get_client()
+        rows = []
+        with st.spinner("Fetching all users and their connections..."):
+            async def run_export():
+                users = await client.get_users()
+                sem = asyncio.Semaphore(5)
+                async def process(u):
+                    email = u.get("UserEmail", "")
+                    uid = u.get("UserEmailId")
+                    if not uid:
+                        return
+                    async with sem:
+                        try:
+                            conns = await client.list_connections(uid)
+                        except Exception:
+                            rows.append((email, "", "", "", "LIST ERROR"))
+                            return
+                        if not conns:
+                            rows.append((email, "(no connections)", "", "", ""))
+                            return
+                        for c in conns:
+                            cid = c.get("ConnectionId")
+                            name = c.get("Name", "")
+                            ctype = c.get("Type", "")
+                            cli = ""
+                            try:
+                                detail = await client.get_connection(uid, cid)
+                                reg = detail.get("Registration", {}) or {}
+                                cli = reg.get("username") or reg.get("registrar_username") or ""
+                            except Exception:
+                                cli = "DETAIL ERROR"
+                            rows.append((email, name, ctype, cid, cli))
+                await asyncio.gather(*[process(u) for u in users])
+            run(run_export())
+        import csv as _csv
+        import io as _io
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["Email", "Connection", "Type", "ConnectionId", "CLI"])
+        w.writerows(rows)
+        st.session_state["cli_csv"] = buf.getvalue()
+        st.session_state["cli_rows"] = rows
+    if st.session_state.get("cli_rows"):
+        rows = st.session_state["cli_rows"]
+        st.metric("Users / Connections", len(rows))
+        st.dataframe(
+            [{"Email": r[0], "Connection": r[1], "Type": r[2], "CLI": r[4]} for r in rows],
+            use_container_width=True, hide_index=True
+        )
+        st.download_button(
+            "Download CSV",
+            data=st.session_state["cli_csv"],
+            file_name="cli_export.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
