@@ -165,6 +165,12 @@ def _cached_billing(owner_user_id):
             pass
         lo.close()
 
+def invalidate_dashboard_cache():
+    """Dashboard figures are cached for 5 min. Force a fresh read so seat
+    counts reflect creates/deletes immediately instead of after the TTL."""
+    _cached_domain_users.clear()
+    _cached_billing.clear()
+
 # ── Send log (in-memory for cloud) ───────────────────────────
 def get_send_log():
     if "_send_log" not in st.session_state:
@@ -512,6 +518,9 @@ if page == "Dashboard":
         st.warning("RESEND_API_KEY not set in Streamlit Secrets — Send Notifications won't work.")
     if not config.CONNEXCS_USERNAME or not config.CONNEXCS_PASSWORD:
         st.warning("ConnexCS credentials not set in Streamlit Secrets — ConnexCS DID won't work.")
+    if st.button("Refresh", key="dash_refresh", help="Bypass the 5-minute cache and re-read seat counts"):
+        invalidate_dashboard_cache()
+        st.rerun()
     try:
         client = get_client()
         billing = _cached_billing(client.owner_user_id)
@@ -727,6 +736,8 @@ elif page == "Create User":
             col1.metric("Successful", success)
             col2.metric("Warnings", warns)
             col3.metric("Failed", failed)
+            if success or warns:
+                invalidate_dashboard_cache()
             for email, status, detail in results:
                 if status == "success":
                     st.success(f"{email}: {detail}")
@@ -815,6 +826,8 @@ elif page == "Delete User":
             col1.metric("Deleted", success)
             col2.metric("Warnings", warns)
             col3.metric("Failed", failed)
+            if success or warns:
+                invalidate_dashboard_cache()
             for email, status, detail in results:
                 if status == "success":
                     st.success(f"{email}: {detail}")
