@@ -218,7 +218,7 @@ async def find_user(client, email, users=None):
     return None
 
 async def list_connections(client, uid):
-    return await client.request("GET", f"/Users/{client.owner_user_id}/DomainUsers/{uid}/Connections")
+    return await client.list_connections(uid)
 
 async def extend_one(client, email, days, users=None):
     user = await find_user(client, email, users)
